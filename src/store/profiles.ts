@@ -13,7 +13,7 @@ interface ProfilesState {
   replaceAll: (profiles: Profile[], activeId?: string | null) => void;
 }
 
-export const PROFILE_COLORS = ['#38bdf8', '#a78bfa', '#f472b6', '#34d399', '#fbbf24', '#fb7185', '#60a5fa', '#f97316'];
+export const PROFILE_COLORS = ['#e50914', '#c8963e', '#2f9e74', '#3f6fd1', '#8b5cf6', '#be3a68', '#2c8f9a', '#6b6b72'];
 
 export const useProfiles = create<ProfilesState>()(
   persist(

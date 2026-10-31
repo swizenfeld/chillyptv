@@ -36,7 +36,7 @@ It runs as an installable web app (PWA) backed by a small Node server, so it wor
 | **Category manager** | Hide categories you never watch, and PIN-lock any category (adult categories are locked automatically). |
 | **Sync & backup** | Optional sync of playlists, favourites, history and settings between devices through your own server, plus JSON export and import. |
 | **Provider quirks handled** | Per-playlist User-Agent, `#EXTVLCOPT`, Kodi `|User-Agent=` headers, redirecting panels, EPG time shift, provider timezones for timeshift. |
-| **Themes** | Dark, OLED black and light, with a custom accent colour. Responsive down to phone size. |
+| **Themes** | Neutral dark, OLED black and light themes set in Geist, with cinema-red as the signature accent (gold, signal green, ice, violet and platinum available). Responsive down to phone size. |
 
 ## Quick start
 

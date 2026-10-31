@@ -38,7 +38,7 @@ export interface Settings {
 
 export const DEFAULT_SETTINGS: Settings = {
   theme: 'dark',
-  accent: '#38bdf8',
+  accent: '#e50914',
   clock24: true,
   useProxy: true,
   userAgent: '',
@@ -80,7 +80,17 @@ export const useSettings = create<SettingsState>()(
       set: (patch) => set(patch),
       reset: () => set(DEFAULT_SETTINGS),
     }),
-    { name: 'chilly.settings', version: 1, merge: (persisted, current) => ({ ...current, ...(persisted as object) }) },
+    {
+      name: 'chilly.settings',
+      version: 2,
+      // v2: the default accent moved from sky blue to cinema red; keep any colour the viewer chose.
+      migrate: (persisted, version) => {
+        const state = (persisted ?? {}) as Partial<Settings>;
+        if (version < 2 && (!state.accent || state.accent === '#38bdf8')) state.accent = '#e50914';
+        return state as SettingsState;
+      },
+      merge: (persisted, current) => ({ ...current, ...(persisted as object) }),
+    },
   ),
 );
 

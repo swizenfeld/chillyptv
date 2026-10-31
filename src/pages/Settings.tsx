@@ -13,7 +13,8 @@ import { useParental } from '../components/Parental';
 import { toast } from '../store/toast';
 import type { ContentKind } from '../lib/types';
 
-const ACCENTS = ['#38bdf8', '#a78bfa', '#f472b6', '#34d399', '#fbbf24', '#fb7185', '#f97316', '#e2e8f0'];
+// Curated signature accents: cinema red, gold, signal green, ice blue, violet, platinum.
+const ACCENTS = ['#e50914', '#d4a24c', '#00c805', '#a8c7fa', '#9b7bff', '#e4e4e7'];
 
 export function SettingsPage() {
   const s = useSettings();

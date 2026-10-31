@@ -41,7 +41,7 @@ export function Img({ src, alt, className, fallbackText, rounded }: { src?: stri
     let h = 0;
     for (const c of alt) h = (h * 31 + c.charCodeAt(0)) % 360;
     return (
-      <div className={`img-fallback ${className ?? ''} ${rounded ? 'rounded' : ''}`} style={{ background: `linear-gradient(135deg, hsl(${h} 55% 35%), hsl(${(h + 50) % 360} 55% 20%))` }} aria-label={alt}>
+      <div className={`img-fallback ${className ?? ''} ${rounded ? 'rounded' : ''}`} style={{ background: `linear-gradient(135deg, hsl(${h} 24% 30%), hsl(${(h + 40) % 360} 18% 16%))` }} aria-label={alt}>
         <span>{text || '?'}</span>
       </div>
     );
