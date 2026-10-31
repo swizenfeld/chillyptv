@@ -3194,8 +3194,42 @@ div.live-card-logo {
   gap: 6px;
   align-items: center;
 }
-.sports-section h3 .count {
+.sports-section h3 .count,
+.sports-fold .count {
   color: var(--text);
+}
+.sports-fold {
+  all: unset;
+  box-sizing: border-box;
+  cursor: pointer;
+  margin: 14px 0 8px;
+  font-size: 12px;
+  font-weight: 650;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 32px;
+  border-radius: 6px;
+}
+.sports-fold:hover {
+  color: var(--text);
+}
+.sports-fold:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.sports-fold svg {
+  transition: transform 0.18s ease;
+  transform: rotate(-90deg);
+}
+.sports-fold svg.open {
+  transform: none;
+}
+.feed-badge.muted {
+  opacity: 0.6;
 }
 .match-card {
   border: 1px solid var(--border);
@@ -3616,4 +3650,13 @@ textarea.input {
   resize: vertical;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 12px;
+}
+
+.mv-limit {
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid color-mix(in oklab, var(--warn) 45%, transparent);
+  background: color-mix(in oklab, var(--warn) 10%, transparent);
+  font-size: 13px;
 }

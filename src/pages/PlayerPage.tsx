@@ -12,7 +12,7 @@ import { Img } from '../components/ui';
 import { quickFilter } from '../lib/search';
 import { toast } from '../store/toast';
 import { formatMinutes } from '../lib/format';
-import { channelTags } from '../lib/channelTags';
+import { channelTags, feedName } from '../lib/channelTags';
 import { QUALITY_LABEL } from '../../shared/channels';
 import { useSettings } from '../store/settings';
 import type { Channel } from '../lib/types';
@@ -67,7 +67,7 @@ export function PlayerPage() {
       toast.error(`All ${alt.all.length} feeds for ${alt.label} failed`);
       return;
     }
-    toast.info(`${channel?.name ?? 'This feed'} stopped. Switched to ${next.name}.`);
+    toast.info(`${channel ? feedName(channel) : 'This feed'} stopped. Switched to ${feedName(next)}.`);
     switchTo(next, true);
   };
 
@@ -197,7 +197,7 @@ function ChannelOverlay({ ids, current, onPick, onClose, title }: { ids: string[
                 <span className="overlay-title">{p?.title ?? c.name}</span>
                 <span className="overlay-meta">
                   {title && <FeedBadges ch={c} />}
-                  <span className="tabular">{c.num}</span> {c.name}
+                  <span className="tabular">{c.num}</span> {title ? feedName(c) : c.name}
                   {p ? ` · ${formatMinutes(Math.max(0, p.end - now) / 1000)} left` : ''}
                 </span>
               </span>
@@ -219,6 +219,7 @@ export function FeedBadges({ ch }: { ch: Channel }) {
       {q && <span className="feed-badge">{q}</span>}
       {t.lang && <span className="feed-badge">{t.lang.toUpperCase()}</span>}
       {t.variant && <span className="feed-badge">{t.variant}</span>}
+      {t.event === 'ended' && <span className="feed-badge muted">Ended</span>}
     </>
   );
 }

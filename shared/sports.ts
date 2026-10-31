@@ -139,6 +139,9 @@ const AMBIGUOUS = new Set([
   'united', 'city', 'real', 'sporting', 'athletic', 'atletico', 'deportivo', 'racing', 'inter', 'madrid', 'manchester', 'san', 'santa', 'union',
   'independiente', 'central', 'juniors', 'plate', 'rovers', 'wanderers', 'town', 'county', 'albion', 'villa', 'palace', 'forest', 'ham', 'west',
   'galaxy', 'new', 'york', 'los', 'angeles', 'paris', 'saint', 'germain', 'munich', 'borussia', 'olympique', 'nacional', 'velez', 'estudiantes',
+  // Argentine clubs share these, and ESPN puts the city in brackets: "Talleres (Córdoba)", "Gimnasia y Esgrima (Jujuy)".
+  'cordoba', 'gimnasia', 'esgrima', 'martin', 'antonio', 'oeste', 'defensores', 'almirante', 'argentino', 'argentinos', 'tucuman',
+  'mendoza', 'rosario', 'santiago', 'estero', 'jujuy', 'salta', 'juan', 'luis', 'plata', 'buenos', 'aires', 'ferro', 'carril', 'deportiva',
 ]);
 
 /** Common nicknames TV guides use. Keys and values are normalised. */
@@ -173,6 +176,14 @@ const ALIASES: Record<string, string[]> = {
   'estudiantes de la plata': ['estudiantes', 'estudiantes lp'],
   'talleres': ['talleres cordoba', 'talleres de cordoba'],
   'deportivo riestra': ['riestra'],
+  'ferro carril oeste': ['ferro'],
+  'godoy cruz antonio tomba': ['godoy cruz'],
+  'gimnasia y esgrima jujuy': ['gimnasia de jujuy', 'gimnasia jujuy'],
+  'gimnasia y esgrima la plata': ['gimnasia la plata', 'gimnasia lp', 'gimnasia de la plata'],
+  'san martin san juan': ['san martin de san juan', 'san martin sj'],
+  'san martin tucuman': ['san martin de tucuman'],
+  'instituto cordoba': ['instituto de cordoba'],
+  'racing cordoba': ['racing de cordoba'],
 };
 
 const ALIAS_INDEX: { canon: string; names: string[] }[] = Object.entries(ALIASES).map(([canon, names]) => ({ canon, names: [canon, ...names] }));
@@ -193,13 +204,21 @@ export function teamNames(t: Team): string[] {
     const s = strip(raw);
     if (n) out.add(n);
     if (s) out.add(s);
+    // "Talleres (Córdoba)" → also "talleres", unless that alone is ambiguous ("Racing (Córdoba)").
+    const bare = strip(raw.replace(/\([^)]*\)/g, ' '));
+    // Only when a word in it is distinctive: "San Martín" or "Gimnasia y Esgrima" alone are several clubs.
+    if (bare && bare !== s && bare.split(' ').some((w) => w.length >= 4 && !AMBIGUOUS.has(w) && !NOISE.has(w))) out.add(bare);
   }
+  const own = [...out];
   for (const entry of ALIAS_INDEX) {
-    if ([...out].some((n) => entry.names.includes(n) || n.includes(entry.canon))) entry.names.forEach((a) => out.add(a));
+    if (own.some((n) => entry.names.includes(n) || n.includes(entry.canon))) entry.names.forEach((a) => out.add(a));
   }
-  // A single distinctive word (e.g. "chelsea", "sarsfield") is enough on its own.
-  for (const n of [...out]) {
-    for (const w of n.split(' ')) if (w.length >= 5 && !AMBIGUOUS.has(w) && !NOISE.has(w)) out.add(w);
+  // A single distinctive word (e.g. "chelsea", "sarsfield") is enough on its own — but never a
+  // word from the bracketed city ("cordoba" from "Instituto (Córdoba)").
+  const city = new Set([t.name, t.short].flatMap((r) => [...(r ?? '').matchAll(/\(([^)]*)\)/g)].flatMap((m) => normalize(m[1]).split(' '))));
+  // Words come from the team's own name only: "Inter Milan" (an alias of Internazionale) must not yield "milan".
+  for (const n of own) {
+    for (const w of n.split(' ')) if (w.length >= 5 && !AMBIGUOUS.has(w) && !NOISE.has(w) && !city.has(w)) out.add(w);
   }
   return [...out].filter((n) => n.length >= 3).sort((a, b) => b.length - a.length);
 }
@@ -244,18 +263,40 @@ export interface PreparedFixture {
 
 /** Pre-computes the names to look for, so scoring thousands of programmes stays cheap. */
 export function prepareFixture(f: Fixture): PreparedFixture {
-  return { fixture: f, home: teamNames(f.home), away: teamNames(f.away), league: LEAGUE_BY_ID.get(f.leagueId)?.keywords ?? [] };
+  const home = teamNames(f.home);
+  const away = teamNames(f.away);
+  // A name both sides share ("Racing (Córdoba)" v "Instituto (Córdoba)") can't tell them apart.
+  const shared = new Set(home.filter((n) => away.includes(n)));
+  return { fixture: f, home: home.filter((n) => !shared.has(n)), away: away.filter((n) => !shared.has(n)), league: LEAGUE_BY_ID.get(f.leagueId)?.keywords ?? [] };
 }
 
 const HEAD_TO_HEAD = / (v|vs|versus|x) /;
+
+/** `text` with every mention of `names` blanked out (names are longest-first). */
+function without(text: string, names: string[]): string {
+  let t = ` ${text} `;
+  for (const n of names) if (t.includes(` ${n} `)) t = t.split(` ${n} `).join('  ');
+  return t.trim();
+}
+
+/**
+ * Both teams named independently: "Inter Milan v Juventus" names Internazionale, and its
+ * "milan" must not also count as AC Milan. Each side is looked for with the other side's names removed.
+ */
+function namesBoth(text: string, pf: PreparedFixture): boolean {
+  if (!pf.home.some((n) => mentions(text, n)) || !pf.away.some((n) => mentions(text, n))) return false;
+  const noAway = without(text, pf.away);
+  const noHome = without(text, pf.home);
+  return pf.home.some((n) => mentions(noAway, n)) && pf.away.some((n) => mentions(noHome, n));
+}
 
 /** `text` and `title` must already be normalised. */
 export function scorePrepared(text: string, start: number, end: number, pf: PreparedFixture, title = ''): number {
   const f = pf.fixture;
   if (end <= f.start - 15 * 60_000 || start >= f.start + 115 * 60_000) return 0;
+  if (namesBoth(text, pf)) return 1;
   const home = pf.home.some((n) => mentions(text, n));
   const away = pf.away.some((n) => mentions(text, n));
-  if (home && away) return 1;
   // "Atlético vs Sevilla" is a different match from Real Madrid v Sevilla, even though it names Sevilla.
   if (HEAD_TO_HEAD.test(` ${title} `)) return 0;
   if ((home || away) && pf.league.some((k) => mentions(text, k))) return 0.6;
@@ -267,7 +308,7 @@ export function scorePrepared(text: string, start: number, end: number, pf: Prep
  * "LAT| ARG FANATIZ PPV 3: Boca Juniors vs River Plate 19:00". `nameNorm` must be normalised.
  */
 export function channelNameScore(nameNorm: string, pf: PreparedFixture): number {
-  return pf.home.some((n) => mentions(nameNorm, n)) && pf.away.some((n) => mentions(nameNorm, n)) ? 1 : 0;
+  return namesBoth(nameNorm, pf) ? 1 : 0;
 }
 
 /** Cheap test on raw text before normalising it: could it name a tracked competition? */

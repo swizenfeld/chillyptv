@@ -18,10 +18,22 @@ export interface ChannelTags {
   variant?: string;
   /** Name without prefix, quality, variant and language markers (normalised). Used to match guides. */
   base: string;
+  /**
+   * Event / PPV channels that announce their state in the name:
+   * "LIVE | Charlotte vs. Orlando | …" → live, "End | …" / "ENDED | …" → ended,
+   * "- NO EVENT STREAMING - | …" → idle (an empty placeholder slot).
+   */
+  event?: 'live' | 'ended' | 'idle';
 }
 
+const EVENT_LIVE_RE = /^\W*(live|en vivo|en directo|on now)\s*[|:]/;
+const EVENT_ENDED_RE = /^\W*(end|ended|finished|final|finalizado)\s*[|:]/;
+const EVENT_IDLE_RE = /\b(no event( streaming)?|no events?|sin evento|off ?air|no live event)\b/;
+/** Marketing labels that look like a quality but say nothing about the stream ("8K EXCLUSIVE"). */
+const MARKETING_RE = /\b(8k|4k|uhd)\s+exclusive\b/g;
+
 const REGION_LANG: Record<string, string> = {
-  LAT: 'es', LATAM: 'es', LATINO: 'es', AR: 'es', ARG: 'es', ES: 'es', ESP: 'es', SPA: 'es', MX: 'es', MEX: 'es', CO: 'es', COL: 'es', CL: 'es', CHI: 'es',
+  LAT: 'es', LATAM: 'es', LATINO: 'es', AR: 'es', ARG: 'es', ES: 'es', ESP: 'es', SPA: 'es', MX: 'es', MEX: 'es', MXC: 'es', CO: 'es', COL: 'es', CL: 'es', CHI: 'es',
   PE: 'es', PER: 'es', UY: 'es', URU: 'es', PY: 'es', EC: 'es', VE: 'es', BO: 'es', CR: 'es', DO: 'es', PR: 'es',
   UK: 'en', GB: 'en', US: 'en', USA: 'en', CA: 'en', AU: 'en', IE: 'en', NZ: 'en', EN: 'en', ENG: 'en',
   BR: 'pt', PT: 'pt', POR: 'pt', IT: 'it', ITA: 'it', FR: 'fr', FRA: 'fr', DE: 'de', GER: 'de', NL: 'nl', TR: 'tr',
@@ -29,7 +41,8 @@ const REGION_LANG: Record<string, string> = {
 
 /** Explicit language words in a name win over the region. Keys are lower-case, accent-free. */
 const LANG_WORDS: [RegExp, string][] = [
-  [/\b(espanol|castellano|spanish|latino|spa|esp)\b/, 'es'],
+  // Not "esp": "Levante vs. Atlético (ESP)" names the league's country, not the commentary.
+  [/\b(espanol|castellano|spanish|latino|spa)\b/, 'es'],
   [/\b(english|eng)\b/, 'en'],
   [/\b(portugues|portuguese|brasil)\b/, 'pt'],
   [/\b(italiano|italian)\b/, 'it'],
@@ -65,7 +78,11 @@ const PREFIX_RE = /^\s*[[(]?\s*([a-z]{2,6})\s*[\])]?\s*(?:[|:»>]|\s-\s|\s–\s)
 /** Parses tags from a channel name, using the category name as a fallback for region/language. */
 export function parseChannelTags(name: string, categoryName = ''): ChannelTags {
   const folded = fold(name);
-  let rest = folded;
+  let event: ChannelTags['event'];
+  if (EVENT_IDLE_RE.test(folded)) event = 'idle';
+  else if (EVENT_ENDED_RE.test(folded)) event = 'ended';
+  else if (EVENT_LIVE_RE.test(folded)) event = 'live';
+  let rest = folded.replace(MARKETING_RE, ' ');
   let region: string | undefined;
   const pm = folded.match(PREFIX_RE);
   if (pm && REGION_LANG[pm[1].toUpperCase()] !== undefined) {
@@ -102,7 +119,29 @@ export function parseChannelTags(name: string, categoryName = ''): ChannelTags {
     .replace(/[^a-z0-9]+/g, ' ')
     .trim();
 
-  return { quality, lang, region, variant: vm ? vm[1].toUpperCase().replace(/\s+/g, ' ') : undefined, base };
+  return { quality, lang, region, variant: vm ? vm[1].toUpperCase().replace(/\s+/g, ' ') : undefined, base, ...(event ? { event } : {}) };
+}
+
+/**
+ * A short label for event / PPV channels whose names carry the whole fixture, e.g.
+ *   "ENDED | EN ESPAÑOL-LEVANTE VS. ATLÉTICO … | 8K EXCLUSIVE | US: ESPN+ PPV 6" → "ESPN+ PPV 6"
+ *   "US (Peacock 003) | Bournemouth v. Leeds United (2026-10-31 10:50:05)"   → "Peacock 003"
+ *   "(Apple) (MLS) 002 |  Charlotte vs. Orlando (Spanish) (…)"                 → "Apple MLS 002"
+ *   "Serie A: Bologna vs Monza @ Oct 31 9:50 AM :Paramount+  05"               → "Paramount+ 05"
+ * Returns undefined for ordinary channel names.
+ */
+export function eventLabel(name: string): string | undefined {
+  const clean = (s: string) => s.replace(/[()]/g, ' ').replace(/\s+/g, ' ').trim();
+  // Provider slot at the end: "| US: ESPN+ PPV 6", "| US: MLS PPV 1".
+  const tail = name.match(/\|\s*(?:[A-Z]{2,4}\s*[:|]\s*)?([^|]*?\b(?:PPV|EVENT|EVENTS)\b[^|]*?\d+)\s*$/i);
+  if (tail && name.includes('|')) return clean(tail[1]);
+  // Provider slot at the start: "US (ESPN+ 166) | …", "AU (STAN 10) | …", "(Apple) (MLS) 002 | …", "(FLSP 342) | …".
+  const head = name.match(/^\s*(?:[A-Z]{2,4}\s*)?((?:\([^)]*\)\s*)+[\w+]*\s*\d*)\s*\|/);
+  if (head && /\d/.test(head[1])) return clean(head[1]);
+  // "… @ Oct 31 9:50 AM :Paramount+  05"
+  const at = name.match(/@[^:]*\d{1,2}:\d{2}\s*[AP]M\s*:\s*(.+?)\s*$/i);
+  if (at) return clean(at[1]);
+  return undefined;
 }
 
 export interface FeedPrefs {

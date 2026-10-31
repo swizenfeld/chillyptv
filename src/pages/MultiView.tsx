@@ -15,6 +15,7 @@ const SLOT_COUNT: Record<MultiLayout, number> = { '1': 1, '2': 2, '3': 3, '4': 4
 export function MultiViewPage() {
   const profile = useActiveProfile();
   const index = useCatalog((s) => s.index);
+  const account = useCatalog((s) => s.account);
   const stored = useLibrary((s) => (profile ? s.multiview[profile.id] : undefined));
   const setMultiview = useLibrary((s) => s.setMultiview);
   const [picking, setPicking] = useState<number | null>(null);
@@ -50,8 +51,14 @@ export function MultiViewPage() {
             { value: '9', label: '3×3' },
           ]}
         />
-        <span className="muted small">Click a tile to give it the audio. Several streams count against your provider's connection limit.</span>
+        <span className="muted small">Click a tile to give it the audio. Each tile uses one of your provider's connections.</span>
       </div>
+      {account && slots.filter(Boolean).length > account.maxConnections && (
+        <p className="mv-limit" role="status">
+          Your plan allows {account.maxConnections === 1 ? 'one stream' : `${account.maxConnections} streams`} at a time, so only{' '}
+          {account.maxConnections === 1 ? 'one tile' : `${account.maxConnections} tiles`} can play. The provider will refuse or cut off the others.
+        </p>
+      )}
       <div className={`mv-grid layout-${mv.layout.replace('+', 'p')}`}>
         {slots.map((id, i) => {
           const ch = id ? index.channelById.get(id) : undefined;

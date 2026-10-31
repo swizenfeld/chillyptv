@@ -8,6 +8,7 @@ import { formatClock } from '../lib/format';
 import { quickFilter } from '../lib/search';
 import { Empty, Img, Spinner } from './ui';
 import { FeedBadges } from '../pages/PlayerPage';
+import { feedName } from '../lib/channelTags';
 import { followKeys, isFollowed, type Team } from '../../shared/sports';
 import { toast } from '../store/toast';
 
@@ -20,6 +21,7 @@ export function SportsToday({ data, filter, selectedId, onSelect, onOpen }: {
   onOpen: (m: SportsMatch, c?: Channel) => void;
 }) {
   const [group, setGroup] = useState<LeagueGroup | 'all'>('all');
+  const [showOffAir, setShowOffAir] = useState(false);
   const groups = useMemo(() => {
     const present = new Set(data.matches.map((m) => LEAGUE_BY_ID.get(m.fixture.leagueId)?.group).filter(Boolean) as LeagueGroup[]);
     return GROUPS.map((g) => g.id).filter((g) => present.has(g));
@@ -34,12 +36,15 @@ export function SportsToday({ data, filter, selectedId, onSelect, onOpen }: {
 
   // Followed teams' live and upcoming matches are pinned in their own section.
   const pinned = (m: SportsMatch) => m.followed && m.state !== 'post';
+  // Matches none of your channels carry are listed last, folded, unless a followed team plays.
+  const onAir = (m: SportsMatch) => m.channels.length > 0 || pinned(m);
   const sections: [string, SportsMatch[]][] = [
     ['Your teams', matches.filter(pinned)],
-    ['Live now', matches.filter((m) => m.state === 'in' && !pinned(m))],
-    ['Coming up', matches.filter((m) => m.state === 'pre' && !pinned(m))],
-    ['Finished', matches.filter((m) => m.state === 'post')],
+    ['Live now', matches.filter((m) => m.state === 'in' && !pinned(m) && onAir(m))],
+    ['Coming up', matches.filter((m) => m.state === 'pre' && !pinned(m) && onAir(m))],
+    ['Finished', matches.filter((m) => m.state === 'post' && onAir(m))],
   ];
+  const offAir = matches.filter((m) => !onAir(m));
 
   return (
     <div className="sports">
@@ -73,6 +78,14 @@ export function SportsToday({ data, filter, selectedId, onSelect, onOpen }: {
                 ))}
               </section>
             ) : null,
+          )}
+          {offAir.length > 0 && (
+            <section className="sports-section">
+              <button className="sports-fold" aria-expanded={showOffAir} onClick={() => setShowOffAir((v) => !v)}>
+                <ChevronDown size={16} className={showOffAir ? 'open' : ''} /> Not on your channels <span className="count">{offAir.length}</span>
+              </button>
+              {showOffAir && offAir.map((m) => <MatchCard key={m.fixture.id} m={m} selectedId={selectedId} onSelect={onSelect} onOpen={onOpen} />)}
+            </section>
           )}
         </div>
       )}
@@ -124,10 +137,10 @@ export function MatchCard({ m, selectedId, onSelect, onOpen, compact }: {
               className={`match-ch ${selectedId === c.channel.id ? 'active' : ''} ${c.score < 1 ? 'weak' : ''} ${i === 0 ? 'best' : ''}`}
               onClick={() => onSelect(c.channel, m)}
               onDoubleClick={() => onOpen(m, c.channel)}
-              title={c.via === 'broadcaster' ? `${c.channel.name} is listed as a broadcaster; the guide doesn't confirm it` : c.via === 'channel' ? 'The channel name lists this match' : c.programme?.title}
+              title={c.via === 'broadcaster' ? `${c.channel.name} is listed as a broadcaster; the guide doesn't confirm it` : c.via === 'channel' ? c.channel.name : `${c.channel.name} · ${c.programme?.title ?? ''}`}
             >
               <Img src={c.channel.logo} alt="" className="match-ch-logo" />
-              <span className="match-ch-name">{c.channel.name}</span>
+              <span className="match-ch-name">{feedName(c.channel)}</span>
               <span className="match-ch-badges">
                 <FeedBadges ch={c.channel} />
               </span>

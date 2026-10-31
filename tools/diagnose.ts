@@ -9,7 +9,7 @@
  * playlist, the TV guide, channel naming, today's football and timings. The report never
  * contains the username, password, server address or any stream URL.
  *
- * Options: --epg URL (extra XMLTV source)  --ua "User-Agent"  --no-stream (skip the
+ * Options: --epg URL (extra XMLTV source)  --ua "User-Agent"  --languages es,en  --no-stream (skip the
  * one-channel stream check)  --out FILE  --leagues eng.1,esp.1,...
  */
 import { writeFileSync } from 'node:fs';
@@ -17,7 +17,7 @@ import { createInterface } from 'node:readline/promises';
 import { stdin, stdout } from 'node:process';
 import { XmltvParser, type EpgData } from '../shared/xmltv';
 import { parseM3u } from '../shared/m3u';
-import { parseChannelTags, feedRank, compareRank, QUALITY_LABEL, type ChannelTags } from '../shared/channels';
+import { parseChannelTags, feedRank, compareRank, eventLabel, QUALITY_LABEL, type ChannelTags } from '../shared/channels';
 import {
   DEFAULT_LEAGUES, LEAGUE_BY_ID, broadcasterScore, channelNameScore, competitionHint, detectGuideFixture, fixtureKey, parseEspnScoreboard, prepareFixture,
   scorePrepared, type Fixture,
@@ -226,6 +226,7 @@ async function main() {
     ['Raw / backup variant', channels.filter((c) => c.tags.variant).length, pct(channels.filter((c) => c.tags.variant).length, n)],
     ['Has guide id (epg_channel_id / tvg-id)', channels.filter((c) => c.epgId).length, pct(channels.filter((c) => c.epgId).length, n)],
     ['Catch-up', channels.filter((c) => c.archive).length, pct(channels.filter((c) => c.archive).length, n)],
+    ['Event channels (live / ended / empty)', `${channels.filter((c) => c.tags.event === 'live').length} / ${channels.filter((c) => c.tags.event === 'ended').length} / ${channels.filter((c) => c.tags.event === 'idle').length}`, pct(channels.filter((c) => c.tags.event).length, n)],
   ]);
   table(['Region prefix', 'Channels'], top(channels, (c) => c.tags.region, 15));
   table(['Quality', 'Channels'], top(channels, (c) => QUALITY_LABEL[c.tags.quality] || 'none'));
@@ -353,13 +354,14 @@ async function main() {
     }
   }
   const names = channels.map((c) => ({ c, name: normalize(c.name) }));
-  const prefs = { languages: ['es', 'en'], maxQuality: 'uhd' as const };
+  const prefs = { languages: (opt('languages') ?? 'es,en').split(','), maxQuality: 'uhd' as const };
   const rows: (string | number)[][] = [];
   let found = 0;
   for (const f of [...fixtures.values()].sort((a, b) => a.start - b.start)) {
     const pf = prepareFixture(f);
     const best = new Map<string, { c: Ch; score: number }>();
     const offer = (c: Ch, score: number) => {
+      if (c.tags.event === 'idle') return;
       if ((best.get(c.id)?.score ?? 0) < score) best.set(c.id, { c, score });
     };
     for (const t of todays) {
@@ -368,15 +370,28 @@ async function main() {
     }
     for (const { c, name } of names) if (channelNameScore(name, pf)) offer(c, 1);
     for (const c of channels) if (!best.has(c.id) && broadcasterScore(c.name, f)) offer(c, 0.35);
-    const ranked = [...best.values()].sort((a, b) => (b.score >= 1 ? 1 : 0) - (a.score >= 1 ? 1 : 0) || compareRank(feedRank(a.c.tags, prefs), feedRank(b.c.tags, prefs)));
+    // Same order as the app: ended event channels last, then confidence, language and quality,
+    // then one feed per source first (category + language) so a network's local stations don't fill the top.
+    const sorted = [...best.values()].sort(
+      (a, b) => (a.c.tags.event === 'ended' ? 1 : 0) - (b.c.tags.event === 'ended' ? 1 : 0) || (b.score >= 1 ? 1 : 0) - (a.score >= 1 ? 1 : 0) || compareRank(feedRank(a.c.tags, prefs), feedRank(b.c.tags, prefs)),
+    );
+    const seenSrc = new Set<string>();
+    const lead = sorted.filter((x) => {
+      const k = `${x.c.category}|${x.c.tags.lang ?? ''}|${x.c.tags.event === 'ended'}`;
+      const first = !seenSrc.has(k);
+      seenSrc.add(k);
+      return first;
+    });
+    const ranked = [...lead, ...sorted.filter((x) => !lead.includes(x))];
+    const ended = ranked.filter((x) => x.c.tags.event === 'ended').length;
     const sure = ranked.filter((x) => x.score >= 0.6).length;
     if (sure) found++;
     rows.push([
       new Date(f.start).toTimeString().slice(0, 5),
       f.leagueName,
       `${f.home.name} v ${f.away.name}`,
-      `${sure} confirmed, ${ranked.length - sure} maybe`,
-      ranked.slice(0, 3).map((x) => x.c.name).join(' · ') || `— (TV: ${f.broadcasts.join(', ') || '?'})`,
+      `${sure} confirmed, ${ranked.length - sure} maybe${ended ? `, ${ended} ended` : ''}`,
+      ranked.slice(0, 3).map((x) => `${eventLabel(x.c.name) ?? x.c.name}${x.c.tags.lang ? ` [${x.c.tags.lang}]` : ''}`).join(' · ') || `— (TV: ${f.broadcasts.join(', ') || '?'})`,
     ]);
   }
   timings.push(['Match ↔ channel matching', Math.round(performance.now() - t0)]);

@@ -132,6 +132,11 @@ sportsChannels[8].name = 'UK: Sky Sports Main Event';
 // Latin-American style event channel: the match is in the channel name, not the guide.
 sportsChannels[9].name = 'LAT| ARG FANATIZ PPV 3: Boca vs River 20:00';
 sportsChannels[11].name = 'LAT| CONMEBOL PPV 1: Racing vs Cruzeiro';
+// US event-channel style (one slot per event, state in the name, "8K EXCLUSIVE" marketing label).
+sportsChannels[14].name = 'End | Villa vs. Fulham | all | 31-10-2026 | 00:00 (GMT) | 8K EXCLUSIVE | US: SOCCER PPV 128';
+sportsChannels[15].name = 'US (Peacock 013) | Aston Villa v. Fulham (2026-10-31 15:30:05)';
+sportsChannels[16].name = 'LIVE | ASTON VILLA VS. FULHAM | Sat 31 Oct 16:00 EDT (US) | 8K EXCLUSIVE | US: SOCCER PPV 129';
+sportsChannels[17].name = '- NO EVENT STREAMING - | 8K EXCLUSIVE | US: ESPN+ PPV 410';
 const FIXTURES: MockFixture[] = [
   { id: 701, league: 'eng.1', home: 'Chelsea', away: 'Manchester United', offsetMin: -40, broadcasts: ['TNT Sports'], guide: [{ ch: 0, title: 'Premier League: Chelsea v Man Utd' }, { ch: 2, title: 'Live: Chelsea vs Manchester United' }, { ch: 12, title: 'Premier League: Chelsea vs Man Utd' }, { ch: 13, title: 'Premier League: Chelsea vs Man Utd' }] },
   { id: 702, league: 'eng.1', home: 'Tottenham Hotspur', away: 'Crystal Palace', offsetMin: 90, broadcasts: ['Sky Sports'], guide: [{ ch: 1, title: 'Premier League: Spurs v Palace' }] },

@@ -183,7 +183,16 @@ await step('sports today: fixtures matched to channels', async () => {
   if (chans.length < 2) throw new Error(`expected 2+ channels, got ${chans}`);
   // Event/PPV channels carry the match in their name (no guide entry at all).
   await page.locator('.match-card', { hasText: 'Boca Juniors' }).locator('.match-ch', { hasText: 'PPV 3' }).waitFor();
-  // A fixture with no listing says so and names the broadcaster.
+  // US-style event channels: short provider labels, the ended slot last, empty slots never listed.
+  const villa = page.locator('.match-card', { hasText: 'Aston Villa' });
+  await villa.locator('.match-ch').nth(1).waitFor();
+  const first3 = await villa.locator('.match-ch-name').allTextContents();
+  if (first3[0] === 'SOCCER PPV 128' || first3.some((n) => n.includes('|'))) throw new Error(`event feeds not cleaned up: ${first3}`);
+  if (await villa.locator('.match-more').count()) await villa.locator('.match-more').first().click();
+  await villa.locator('.match-ch', { hasText: 'SOCCER PPV 128' }).getByText('Ended').waitFor();
+  if (await page.locator('.match-ch', { hasText: 'PPV 410' }).count()) throw new Error('empty event slot listed as a feed');
+  // Fixtures none of your channels carry are folded away; opened, they say so and name the broadcaster.
+  await page.locator('.sports-fold').click();
   await page.locator('.match-card', { hasText: 'Levante' }).getByText('Not found in your channels').waitFor();
   await page.screenshot({ path: join(OUT, '04b-sports-today.png') });
   await live.locator('.match-ch').first().click();

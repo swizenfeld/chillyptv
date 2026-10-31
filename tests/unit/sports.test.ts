@@ -181,3 +181,29 @@ describe('broadcaster channels (strict)', () => {
     expect(broadcasterScore('Fox News HD', f(['FOX Sports']))).toBe(0);
   });
 });
+
+describe('real provider names (diagnostic report)', () => {
+  const at = (h: string, a: string, leagueId = 'ita.1') => prepareFixture(fx(h, a, leagueId));
+  it('"Inter Milan" alone is not the Milan derby', () => {
+    const f = at('AC Milan', 'Internazionale');
+    expect(programmeScore(prog('Inter Milan vs Juventus'), f.fixture)).toBe(0);
+    expect(channelNameScore(normalize('PPV 3: Inter Milan vs Lazio'), f)).toBe(0);
+    expect(programmeScore(prog('Serie A: Milan vs Inter'), f.fixture)).toBe(1);
+    expect(programmeScore(prog('Nogomet (M): Milan - Inter, Serie A 2026/2027'), f.fixture)).toBe(1);
+    expect(programmeScore(prog('AC Milan v Inter Milan'), f.fixture)).toBe(1);
+  });
+  it('a bracketed city never identifies a club on its own', () => {
+    expect(teamNames({ name: 'Talleres (Córdoba)' })).toContain('talleres');
+    expect(teamNames({ name: 'Instituto (Córdoba)' })).not.toContain('cordoba');
+    expect(teamNames({ name: 'Racing (Córdoba)' })).not.toContain('racing');
+    expect(teamNames({ name: 'San Martín (San Juan)' })).not.toContain('san martin');
+    expect(teamNames({ name: 'Gimnasia y Esgrima (Jujuy)' })).not.toContain('gimnasia y esgrima');
+    const derby = at('Racing (Córdoba)', 'Instituto (Córdoba)', 'arg.2');
+    expect(channelNameScore(normalize('Talleres de Córdoba vs Belgrano de Córdoba'), derby)).toBe(0);
+  });
+  it('event channels name both teams', () => {
+    const f = at('Levante', 'Atlético Madrid', 'esp.1');
+    expect(channelNameScore(normalize('ENDED | EN ESPAÑOL-LEVANTE UD VS. ATLÉTICO DE MADRID (FECHA #11) | Sat 31 Oct 08:55 EDT (US) | 8K EXCLUSIVE | US: ESPN+ PPV 6'), f)).toBe(1);
+    expect(channelNameScore(normalize('US (ESPN+ 011) | Soccer: Levante vs. Atlético Madrid (Levante vs. Atlético de Madrid (ESP)) (2026-10-31 08:50:30)'), f)).toBe(1);
+  });
+});

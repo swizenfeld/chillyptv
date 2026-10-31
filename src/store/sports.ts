@@ -51,10 +51,11 @@ export interface SportsToday {
   diagnostics: SportsDiagnostics;
 }
 
+/** Today, plus whatever kicks off in the next 6 hours: late in the evening, after-midnight matches count. */
 function todayWindow(now = Date.now()): { from: number; to: number } {
   const d = new Date(now);
   d.setHours(0, 0, 0, 0);
-  return { from: d.getTime(), to: d.getTime() + 86_400_000 };
+  return { from: d.getTime(), to: Math.max(d.getTime() + 86_400_000, now + 6 * 3_600_000) };
 }
 
 interface FeedState {
@@ -116,6 +117,23 @@ interface IndexedProgramme {
 
 const textOf = (ip: IndexedProgramme) => (ip.text ??= normalize(`${ip.p.title} ${ip.p.subtitle ?? ''} ${ip.p.desc ?? ''}`));
 const titleOf = (ip: IndexedProgramme) => (ip.title ??= normalize(ip.p.title));
+
+/**
+ * Reorders ranked feeds so the first few come from different sources: a network carried by 190
+ * local stations ("US| NBC NETWORK") would otherwise fill every slot with the same broadcast.
+ * The first feed of each source keeps its rank; repeats follow in their original order.
+ */
+export function diversify(list: MatchChannel[]): MatchChannel[] {
+  const seen = new Set<string>();
+  const lead: MatchChannel[] = [];
+  const rest: MatchChannel[] = [];
+  for (const c of list) {
+    const key = `${c.channel.categoryId}|${c.tags.lang ?? ''}|${c.tags.event === 'ended' ? 'ended' : ''}|${c.programme ? `${c.programme.start}|${c.programme.title}` : c.via}`;
+    (seen.has(key) ? rest : lead).push(c);
+    seen.add(key);
+  }
+  return [...lead, ...rest];
+}
 
 /**
  * Today's matches for the tracked competitions and the channels showing them.
@@ -190,6 +208,7 @@ export function useSportsToday(active = true): SportsToday {
       const pf = prepareFixture(f);
       const best = new Map<string, MatchChannel>();
       const offer = (m: MatchChannel) => {
+        if (m.tags.event === 'idle') return; // "- NO EVENT STREAMING -" placeholder slots
         const prev = best.get(m.channel.id);
         if (!prev || m.score > prev.score) best.set(m.channel.id, m);
       };
@@ -214,9 +233,10 @@ export function useSportsToday(active = true): SportsToday {
           }
         }
       }
-      const ranked = [...best.values()].map((c) => ({ c, t: tier(c.score), r: feedRank(c.tags, prefs) }));
-      ranked.sort((a, b) => a.t - b.t || compareRank(a.r, b.r) || a.c.channel.num - b.c.channel.num);
-      return { fixture: f, state: stateAt(f, now), channels: ranked.map((x) => x.c), followed: isFollowed(f.home, followed) || isFollowed(f.away, followed) };
+      // Event channels whose name says the event is over go last.
+      const ranked = [...best.values()].map((c) => ({ c, e: c.tags.event === 'ended' ? 1 : 0, t: tier(c.score), r: feedRank(c.tags, prefs) }));
+      ranked.sort((a, b) => a.e - b.e || a.t - b.t || compareRank(a.r, b.r) || a.c.channel.num - b.c.channel.num);
+      return { fixture: f, state: stateAt(f, now), channels: diversify(ranked.map((x) => x.c)), followed: isFollowed(f.home, followed) || isFollowed(f.away, followed) };
     });
 
     const order = { in: 0, pre: 1, post: 2 } as const;
