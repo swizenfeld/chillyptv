@@ -206,9 +206,9 @@ await step('reminder from guide', async () => {
 
 await step('catch-up playback (timeshift)', async () => {
   await page.locator('.rail-item', { hasText: 'Catch-up' }).click();
-  await page.locator('.archive .btn.primary').first().waitFor({ timeout: 20000 });
+  await page.locator('.archive .epg-item .btn').first().waitFor({ timeout: 20000 });
   await page.screenshot({ path: join(OUT, '06-catchup.png') });
-  await page.locator('.archive li:not(.now) .btn.primary').first().click();
+  await page.locator('.archive li:not(.now) .btn').first().click();
   await page.waitForURL(/\/play/);
   await playing('.player-full video', 1.5, 40000);
   await page.keyboard.press('Escape');

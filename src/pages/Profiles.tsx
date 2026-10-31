@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { set as idbSet } from 'idb-keyval';
-import { Check, FileUp, Link2, Pencil, Plus, Server, Trash2, Tv } from 'lucide-react';
+import { Check, FileUp, Link2, Pencil, Plus, Server, Snowflake, Trash2, Tv } from 'lucide-react';
 import { PROFILE_COLORS, useProfiles } from '../store/profiles';
 import { useCatalog, fetchCatalog } from '../store/catalog';
 import { normalizeServer, parseXtreamLink } from '../lib/xtream';
@@ -22,7 +22,10 @@ export function ProfilesPage() {
     <div className="profiles-page">
       <div className="profiles-hero">
         <div className="brand big">
-          <span className="brand-mark">❄</span> ChillyPTV
+          <span className="brand-mark">
+            <Snowflake size={30} strokeWidth={2.2} aria-hidden />
+          </span>{' '}
+          ChillyPTV
         </div>
         <p className="muted">Choose a playlist, or add an Xtream Codes account or M3U playlist.</p>
       </div>

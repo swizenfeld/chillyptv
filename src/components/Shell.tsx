@@ -1,5 +1,5 @@
 import { NavLink, Outlet, useNavigate } from 'react-router-dom';
-import { CalendarClock, Clapperboard, Film, Heart, History, Home, LayoutGrid, RefreshCw, Search, Settings, Tv, Video, UserCircle2, AlertTriangle } from 'lucide-react';
+import { CalendarClock, Clapperboard, Film, Heart, History, Home, LayoutGrid, RefreshCw, Search, Settings, Snowflake, Tv, Video, UserCircle2, AlertTriangle } from 'lucide-react';
 import { useActiveProfile } from '../store/profiles';
 import { useCatalog } from '../store/catalog';
 import { useEpg } from '../store/epg';
@@ -13,12 +13,13 @@ const NAV = [
   { to: '/live', icon: Tv, label: 'Live TV' },
   { to: '/movies', icon: Film, label: 'Movies' },
   { to: '/series', icon: Clapperboard, label: 'Series' },
-  { to: '/guide', icon: CalendarClock, label: 'TV Guide' },
-  { to: '/catchup', icon: History, label: 'Catch-up' },
-  { to: '/multiview', icon: LayoutGrid, label: 'Multi-View' },
+  // "secondary" items are also Home shortcuts, so the phone bottom bar can drop them.
+  { to: '/guide', icon: CalendarClock, label: 'TV Guide', secondary: true },
+  { to: '/catchup', icon: History, label: 'Catch-up', secondary: true },
+  { to: '/multiview', icon: LayoutGrid, label: 'Multi-View', secondary: true },
   { to: '/search', icon: Search, label: 'Search' },
-  { to: '/favorites', icon: Heart, label: 'Favorites' },
-  { to: '/recordings', icon: Video, label: 'Recordings' },
+  { to: '/favorites', icon: Heart, label: 'Favourites' },
+  { to: '/recordings', icon: Video, label: 'Recordings', secondary: true },
   { to: '/settings', icon: Settings, label: 'Settings' },
 ];
 
@@ -37,12 +38,14 @@ export function Shell() {
     <div className="shell">
       <nav className="rail" aria-label="Main">
         <div className="brand" onClick={() => navigate('/')} role="button" tabIndex={0}>
-          <span className="brand-mark">❄</span>
+          <span className="brand-mark">
+            <Snowflake size={18} strokeWidth={2.4} aria-hidden />
+          </span>
           <span className="brand-name">ChillyPTV</span>
         </div>
         {NAV.map((n) => (
-          <NavLink key={n.to} to={n.to} end={n.end} className={({ isActive }) => `rail-item ${isActive ? 'active' : ''}`} title={n.label}>
-            <n.icon size={20} />
+          <NavLink key={n.to} to={n.to} end={n.end} className={({ isActive }) => `rail-item ${isActive ? 'active' : ''} ${'secondary' in n && n.secondary ? 'secondary-nav' : ''}`} title={n.label}>
+            <n.icon size={20} aria-hidden />
             <span>{n.label}</span>
           </NavLink>
         ))}

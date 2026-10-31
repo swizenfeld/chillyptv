@@ -47,6 +47,13 @@ export function SearchPage() {
     };
   }, [catalog, query, allowed, epgVersion]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  const more = (t: Tab, total: number, shown: number) =>
+    tab === 'all' && total > shown ? (
+      <button className="link-btn" onClick={() => setTab(t)}>
+        Show all {total}
+      </button>
+    ) : null;
+
   const counts = results ? { live: results.live.length, movie: results.movie.length, series: results.series.length, epg: results.epg.length } : null;
   const show = (t: Tab) => tab === 'all' || tab === t;
 
@@ -87,9 +94,12 @@ export function SearchPage() {
       {results && counts && !counts.live && !counts.movie && !counts.series && !counts.epg && <Empty title={`Nothing found for “${query}”`} />}
       {results && show('live') && results.live.length > 0 && (
         <section className="row-section">
-          <h2>
-            <Tv size={18} /> Channels
-          </h2>
+          <div className="row-head">
+            <h2>
+              <Tv size={18} /> Channels
+            </h2>
+            {more('live', results.live.length, 8)}
+          </div>
           <div className="result-list">
             {results.live.slice(0, tab === 'all' ? 8 : 60).map((c) => {
               const nn = nowNext(programmesFor(c));
@@ -108,9 +118,12 @@ export function SearchPage() {
       )}
       {results && show('epg') && results.epg.length > 0 && (
         <section className="row-section">
-          <h2>
-            <CalendarClock size={18} /> On TV
-          </h2>
+          <div className="row-head">
+            <h2>
+              <CalendarClock size={18} /> On TV
+            </h2>
+            {more('epg', results.epg.length, 8)}
+          </div>
           <div className="result-list">
             {results.epg.slice(0, tab === 'all' ? 8 : 60).map((h) => {
               const now = Date.now();
@@ -134,9 +147,12 @@ export function SearchPage() {
       )}
       {results && show('movie') && results.movie.length > 0 && (
         <section className="row-section">
-          <h2>
-            <Film size={18} /> Movies
-          </h2>
+          <div className="row-head">
+            <h2>
+              <Film size={18} /> Movies
+            </h2>
+            {more('movie', results.movie.length, 12)}
+          </div>
           <div className="poster-wrap">
             {results.movie.slice(0, tab === 'all' ? 12 : 60).map((m) => (
               <PosterCard key={m.id} title={m.name} image={m.poster} rating={m.rating} subtitle={m.year} onClick={() => navigate(`/movies/${encodeURIComponent(m.id)}`)} />
@@ -146,9 +162,12 @@ export function SearchPage() {
       )}
       {results && show('series') && results.series.length > 0 && (
         <section className="row-section">
-          <h2>
-            <Clapperboard size={18} /> Series
-          </h2>
+          <div className="row-head">
+            <h2>
+              <Clapperboard size={18} /> Series
+            </h2>
+            {more('series', results.series.length, 12)}
+          </div>
           <div className="poster-wrap">
             {results.series.slice(0, tab === 'all' ? 12 : 60).map((s) => (
               <PosterCard key={s.id} title={s.name} image={s.cover} rating={s.rating} subtitle={s.year} onClick={() => navigate(`/series/${encodeURIComponent(s.id)}`)} />

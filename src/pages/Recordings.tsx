@@ -71,7 +71,7 @@ export function RecordingsPage() {
       </div>
       <p className="muted">Recordings run on your ChillyPTV server, so they continue when the browser is closed. Schedule them from the TV guide or here.</p>
       {error && <div className="error-box">{error}</div>}
-      {items && !items.length && <Empty title="No recordings yet">Open a programme in the TV guide and choose “Schedule recording”, or press Rec while watching live TV.</Empty>}
+      {items && !items.length && <Empty icon={<Video size={36} />} title="No recordings yet">Open a programme in the TV guide and choose “Schedule recording”, or press Rec while watching live TV.</Empty>}
       <ul className="rec-list">
         {items?.map((r) => (
           <li key={r.id} className={`rec-item status-${r.status}`}>

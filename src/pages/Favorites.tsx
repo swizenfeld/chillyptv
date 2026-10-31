@@ -27,7 +27,7 @@ export function FavoritesPage() {
       <h1>
         <Heart size={22} /> Favourites
       </h1>
-      {!live.length && !movies.length && !series.length && <Empty title="No favourites yet">Use the heart icon on channels, movies and series.</Empty>}
+      {!live.length && !movies.length && !series.length && <Empty icon={<Heart size={36} />} title="No favourites yet">Use the heart icon on channels, movies and series.</Empty>}
       {live.length > 0 && (
         <section className="row-section">
           <h2>Channels</h2>

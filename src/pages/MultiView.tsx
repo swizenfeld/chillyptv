@@ -56,7 +56,7 @@ export function MultiViewPage() {
         {slots.map((id, i) => {
           const ch = id ? index.channelById.get(id) : undefined;
           return (
-            <div key={i} className={`mv-tile ${mv.audioSlot === i ? 'audio' : ''}`} onClick={() => ch && save({ audioSlot: i })}>
+            <div key={i} className={`mv-tile ${ch && mv.audioSlot === i ? 'audio' : ''}`} onClick={() => ch && save({ audioSlot: i })}>
               {ch ? (
                 <MultiTile
                   channel={ch}

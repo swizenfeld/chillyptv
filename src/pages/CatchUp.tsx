@@ -100,7 +100,7 @@ function ArchiveList({ channel }: { channel: Channel }) {
                   <div className="epg-title">{p.title}</div>
                   {p.desc && <div className="epg-desc">{p.desc}</div>}
                 </div>
-                <button className="btn small primary" onClick={() => play.playCatchup(channel, p)}>
+                <button className="btn small" onClick={() => play.playCatchup(channel, p)}>
                   <Play size={14} fill="currentColor" /> {live ? 'From start' : 'Watch'}
                 </button>
               </div>

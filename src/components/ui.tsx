@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { X } from 'lucide-react';
+import { AlertCircle, CheckCircle2, Info, X } from 'lucide-react';
 import { imageUrl } from '../lib/api';
 import { useToasts } from '../store/toast';
 
@@ -102,7 +102,8 @@ export function Toasts() {
   return (
     <div className="toasts" aria-live="polite">
       {toasts.map((t) => (
-        <div key={t.id} className={`toast ${t.kind}`}>
+        <div key={t.id} className={`toast ${t.kind}`} role={t.kind === 'error' ? 'alert' : 'status'}>
+          {t.kind === 'success' ? <CheckCircle2 size={18} className="toast-icon" aria-hidden /> : t.kind === 'error' ? <AlertCircle size={18} className="toast-icon" aria-hidden /> : <Info size={18} className="toast-icon" aria-hidden />}
           <span>{t.message}</span>
           {t.action && (
             <button

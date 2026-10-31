@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import { Heart, Play, Star } from 'lucide-react';
+import { Heart, Lock, Play, Star } from 'lucide-react';
 import { Img, ProgressBar } from './ui';
 
 export function Row({ title, action, children }: { title: ReactNode; action?: ReactNode; children: ReactNode }) {
@@ -29,7 +29,7 @@ export function PosterCard({ title, image, subtitle, rating, progress, onClick, 
     <div className="poster-card">
       <button className="poster-btn" onClick={onClick} title={title}>
         <div className="poster-img">
-          {locked ? <div className="img-fallback locked"><span>🔒</span></div> : <Img src={image} alt={title} />}
+          {locked ? <div className="img-fallback locked"><Lock size={28} aria-label="Locked" /></div> : <Img src={image} alt={title} />}
           {rating !== undefined && rating > 0 && (
             <span className="poster-rating">
               <Star size={11} fill="currentColor" /> {rating.toFixed(1)}

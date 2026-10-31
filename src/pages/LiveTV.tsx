@@ -135,7 +135,7 @@ export function LiveTVPage() {
           </select>
         </div>
         {channels.length === 0 ? (
-          <Empty icon={<List size={36} />} title={cat === '__fav' ? 'No favourite channels yet' : 'No channels here'}>
+          <Empty icon={cat === '__fav' ? <Star size={36} /> : <List size={36} />} title={cat === '__fav' ? 'No favourite channels yet' : filter ? `No channels match “${filter}”` : 'No channels here'}>
             {cat === '__fav' && <p>Tap the heart next to a channel to add it.</p>}
           </Empty>
         ) : (
@@ -252,8 +252,11 @@ export function ChannelEpg({ channel, compact }: { channel: Channel; compact?: b
   }, [list, now, channel, compact]);
 
   useEffect(() => {
-    listRef.current?.querySelector('.epg-item.now')?.scrollIntoView({ block: 'center' });
-  }, [channel.id, visible.length]);
+    const list = listRef.current;
+    const current = list?.querySelector<HTMLElement>('.epg-item.now');
+    // Keep a sliver of the previous programme visible so the archive is discoverable.
+    if (list && current) list.scrollTop = Math.max(0, current.offsetTop - 56);
+  }, [channel.id, loading, visible.length]);
 
   if (loading) return <Spinner size={20} label="Loading guide…" />;
   if (!visible.length) return <p className="muted pad">No programme guide for this channel.</p>;

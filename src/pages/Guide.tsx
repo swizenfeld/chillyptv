@@ -16,7 +16,19 @@ import type { Channel, Programme } from '../lib/types';
 
 const PPM = 5; // pixels per minute
 const ROW_H = 64;
-const CH_W = 210;
+const CH_W_WIDE = 210;
+const CH_W_COMPACT = 64;
+
+function useCompact(query = '(max-width: 900px)'): boolean {
+  const [match, setMatch] = useState(() => window.matchMedia(query).matches);
+  useEffect(() => {
+    const mq = window.matchMedia(query);
+    const on = () => setMatch(mq.matches);
+    mq.addEventListener('change', on);
+    return () => mq.removeEventListener('change', on);
+  }, [query]);
+  return match;
+}
 
 export function GuidePage() {
   const profile = useActiveProfile();
@@ -32,6 +44,8 @@ export function GuidePage() {
   const [filter, setFilter] = useState('');
   const [dayOffset, setDayOffset] = useState(0);
   const [modal, setModal] = useState<{ ch: Channel; p: Programme } | null>(null);
+  const compact = useCompact();
+  const CH_W = compact ? CH_W_COMPACT : CH_W_WIDE;
   const allChannels = useVisibleChannels(cat, filter);
   // Only channels that actually have guide data make sense here.
   const channels = useMemo(() => allChannels.filter((c) => programmesFor(c).length > 0), [allChannels, epgVersion]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -45,6 +59,13 @@ export function GuidePage() {
   const width = 24 * 60 * PPM;
 
   const scrollRef = useRef<HTMLDivElement>(null);
+  const dayTabsRef = useRef<HTMLDivElement>(null);
+  // Keep the selected day in view when the tab strip overflows (phones).
+  useEffect(() => {
+    const strip = dayTabsRef.current;
+    const active = strip?.querySelector<HTMLElement>('.active');
+    if (strip && active) strip.scrollLeft = active.offsetLeft - strip.offsetLeft - (strip.clientWidth - active.offsetWidth) / 2;
+  }, [dayOffset, epgStatus]);
   const v = useVirtualizer({ count: channels.length, getScrollElement: () => scrollRef.current, estimateSize: () => ROW_H, overscan: 6 });
 
   const scrollToNow = () => {
@@ -68,7 +89,7 @@ export function GuidePage() {
   const zapIds = channels.map((c) => c.id);
 
   return (
-    <div className="guide">
+    <div className={`guide ${compact ? 'compact' : ''}`}>
       <div className="guide-head">
         <select
           className="select"
@@ -96,7 +117,7 @@ export function GuidePage() {
           <Search size={16} />
           <input value={filter} onChange={(e) => setFilter(e.target.value)} placeholder="Filter channels" aria-label="Filter channels" />
         </div>
-        <div className="day-tabs">
+        <div className="day-tabs" ref={dayTabsRef}>
           {days.map((d) => (
             <button key={d} className={d === dayOffset ? 'active' : ''} onClick={() => setDayOffset(d)}>
               {formatDay(Date.now() + d * 86_400_000)}
@@ -104,7 +125,7 @@ export function GuidePage() {
           ))}
         </div>
         <button
-          className="btn small"
+          className="btn small guide-now-btn"
           onClick={() => {
             if (dayOffset !== 0) setDayOffset(0);
             else scrollToNow();

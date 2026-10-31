@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
-  ArrowLeft, AudioLines, Captions, ChevronDown, ChevronUp, Circle, Copy, ExternalLink, Gauge, Info, Maximize, Minimize, Moon, Pause,
+  ArrowLeft, AudioLines, Check, Captions, ChevronDown, ChevronUp, Circle, Copy, ExternalLink, Gauge, Info, Maximize, Minimize, Moon, Pause,
   PictureInPicture2, Play, RefreshCw, Rewind, FastForward, Settings2, SkipForward, Volume1, Volume2, VolumeX, Radio, ListVideo, Download,
 } from 'lucide-react';
 import { PlaybackEngine, type EngineKind, type EngineStats, type EngineStatus } from './engine';
@@ -595,10 +595,10 @@ export function VideoPlayer(props: VideoPlayerProps) {
               </button>
               {canSeek && (
                 <>
-                  <button className="icon-btn" onClick={() => engine?.seekBy(-10)} aria-label="Back 10 seconds">
+                  <button className="icon-btn seek-step optional-control" onClick={() => engine?.seekBy(-10)} aria-label="Back 10 seconds">
                     <Rewind size={20} />
                   </button>
-                  <button className="icon-btn" onClick={() => engine?.seekBy(10)} aria-label="Forward 10 seconds">
+                  <button className="icon-btn seek-step optional-control" onClick={() => engine?.seekBy(10)} aria-label="Forward 10 seconds">
                     <FastForward size={20} />
                   </button>
                 </>
@@ -648,12 +648,12 @@ export function VideoPlayer(props: VideoPlayerProps) {
                 <Settings2 size={20} />
               </button>
               {full && (
-                <button className={`icon-btn ${showStats ? 'active' : ''}`} onClick={() => setShowStats((x) => !x)} aria-label="Stream stats" title="Stats (S)">
+                <button className={`icon-btn optional-control ${showStats ? 'active' : ''}`} onClick={() => setShowStats((x) => !x)} aria-label="Stream stats" aria-pressed={showStats} title="Stats (S)">
                   <Gauge size={20} />
                 </button>
               )}
               {live && full && (
-                <button className={`icon-btn ${showInfo ? 'active' : ''}`} onClick={() => setShowInfo((x) => !x)} aria-label="Programme info" title="Info (I)">
+                <button className={`icon-btn optional-control ${showInfo ? 'active' : ''}`} onClick={() => setShowInfo((x) => !x)} aria-label="Programme info" aria-pressed={showInfo} title="Info (I)">
                   <Info size={20} />
                 </button>
               )}
@@ -748,8 +748,9 @@ function SubMenu({ title, items, current, onPick, onBack }: { title: string; ite
       </button>
       <div className="menu-scroll">
         {items.map((it) => (
-          <button key={it.id} className={`menu-row ${it.id === current ? 'selected' : ''}`} onClick={() => onPick(it.id)}>
+          <button key={it.id} className={`menu-row ${it.id === current ? 'selected' : ''}`} aria-checked={it.id === current} role="menuitemradio" onClick={() => onPick(it.id)}>
             {it.label}
+            {it.id === current && <Check size={16} className="menu-check" aria-hidden />}
           </button>
         ))}
       </div>
