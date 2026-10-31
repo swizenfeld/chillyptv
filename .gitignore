@@ -1,0 +1,13 @@
+node_modules
+dist
+dist-server
+data
+recordings
+mock/media
+*.log
+.DS_Store
+test-results
+
+# impeccable engine binary (downloaded on demand)
+.claude/skills/impeccable/scripts/bin/
+chillyptv-diagnose.md
