@@ -7,8 +7,19 @@ import { normalize, matchScore } from '../lib/search';
 import { XtreamClient } from '../lib/xtream';
 import type { Catalog, Channel, Profile, Programme } from '../lib/types';
 import { useSettings } from './settings';
+import { useLibrary } from './library';
+import { useCatalog } from './catalog';
+import { parseChannelTags } from '../../shared/channels';
+import { channelTags } from '../lib/channelTags';
 
 const STALE_MS = 6 * 60 * 60 * 1000;
+
+export interface EpgSourceStatus {
+  url: string;
+  ok: boolean;
+  channels: number;
+  error?: string;
+}
 
 interface EpgState {
   profileId: string | null;
@@ -16,23 +27,67 @@ interface EpgState {
   status: 'idle' | 'loading' | 'ready' | 'error';
   error: string | null;
   version: number;
+  /** Result of the last download, per guide source. */
+  sources: EpgSourceStatus[];
+  /** Forget resolved channel → guide links (after a manual fix). */
+  invalidate: () => void;
   load: (profile: Profile, catalog: Catalog, opts?: { force?: boolean }) => Promise<void>;
 }
 
-let resolver: { byId: Map<string, string>; byName: Map<string, string> } | null = null;
+let resolver: { byId: Map<string, string>; byName: Map<string, string>; byBase: Map<string, string> } | null = null;
 const resolvedCache = new Map<string, Programme[]>();
 
+/**
+ * Indexes guide channels by id, display name and cleaned base name ("ESPN 2 HD" → "espn 2").
+ * When several guide channels share a name, the one with the most listings wins.
+ */
 function buildResolver(data: EpgData): void {
   const byId = new Map<string, string>();
   const byName = new Map<string, string>();
+  const byBase = new Map<string, string>();
+  const size = (id: string) => data.programmes[id]?.length ?? 0;
+  const put = (m: Map<string, string>, k: string, id: string) => {
+    const prev = m.get(k);
+    if (k && (!prev || size(id) > size(prev))) m.set(k, id);
+  };
   for (const id of Object.keys(data.programmes)) byId.set(id.toLowerCase(), id);
   for (const ch of Object.values(data.channels)) {
     byId.set(ch.id.toLowerCase(), ch.id);
-    const n = normalize(ch.name);
-    if (n && !byName.has(n)) byName.set(n, ch.id);
+    put(byName, normalize(ch.name), ch.id);
+    const base = parseChannelTags(ch.name).base;
+    if (base.length >= 3) put(byBase, base, ch.id);
   }
-  resolver = { byId, byName };
+  resolver = { byId, byName, byBase };
   resolvedCache.clear();
+}
+
+/** Guide channel key for a catalogue channel: manual fix first, then id, name and cleaned name. */
+export function resolveGuideKey(ch: Channel, depth = 0): string | undefined {
+  if (!resolver) return undefined;
+  const profileId = useEpg.getState().profileId;
+  const override = profileId ? useLibrary.getState().epgOverrides[profileId]?.[ch.id] : undefined;
+  if (override?.startsWith('x:')) return override.slice(2);
+  if (override?.startsWith('c:') && depth < 3) {
+    const other = useCatalog.getState().index?.channelById.get(override.slice(2));
+    if (other) return resolveGuideKey(other, depth + 1);
+  }
+  let key = ch.epgId ? resolver.byId.get(ch.epgId.toLowerCase()) : undefined;
+  key ??= resolver.byName.get(normalize(ch.name));
+  if (!key && ch.epgId) key = resolver.byName.get(normalize(ch.epgId));
+  if (!key) {
+    const base = channelTags(ch).base;
+    if (base.length >= 3) key = resolver.byBase.get(base);
+  }
+  return key;
+}
+
+/** How the channel's guide was found, for the "Fix guide" dialog. */
+export function guideLinkKind(ch: Channel): 'manual' | 'borrowed' | 'auto' | 'none' {
+  const profileId = useEpg.getState().profileId;
+  const override = profileId ? useLibrary.getState().epgOverrides[profileId]?.[ch.id] : undefined;
+  if (override?.startsWith('x:')) return 'manual';
+  if (override?.startsWith('c:')) return 'borrowed';
+  return resolveGuideKey(ch) ? 'auto' : 'none';
 }
 
 function toProgramme(t: EpgProgrammeTuple, shiftMs: number): Programme {
@@ -54,12 +109,11 @@ async function downloadEpg(url: string, profile: Profile, force: boolean): Promi
   return parseXmltv(text, { from: now - s.epgPastDays * 86_400_000, to: now + s.epgFutureDays * 86_400_000 });
 }
 
+/** `a` (earlier source) wins for channels both have; `b` fills the rest. */
 function merge(a: EpgData, b: EpgData): EpgData {
-  return {
-    channels: { ...b.channels, ...a.channels },
-    programmes: { ...b.programmes, ...a.programmes },
-    fetchedAt: Math.min(a.fetchedAt, b.fetchedAt),
-  };
+  const programmes = { ...a.programmes };
+  for (const [id, list] of Object.entries(b.programmes)) if (!programmes[id]?.length) programmes[id] = list;
+  return { channels: { ...b.channels, ...a.channels }, programmes, fetchedAt: Math.min(a.fetchedAt, b.fetchedAt) };
 }
 
 export const useEpg = create<EpgState>()((set, get) => ({
@@ -68,6 +122,11 @@ export const useEpg = create<EpgState>()((set, get) => ({
   status: 'idle',
   error: null,
   version: 0,
+  sources: [],
+  invalidate: () => {
+    resolvedCache.clear();
+    set({ version: get().version + 1 });
+  },
   load: async (profile, catalog, opts = {}) => {
     const switching = get().profileId !== profile.id;
     if (switching) {
@@ -84,7 +143,8 @@ export const useEpg = create<EpgState>()((set, get) => ({
     }
     const current = get().data;
     if (current && !opts.force && Date.now() - current.fetchedAt < STALE_MS) return;
-    const urls = catalog.epgUrls.filter(Boolean);
+    // Provider guide first; extra sources only fill channels it lacks.
+    const urls = [...new Set([...catalog.epgUrls, ...(profile.extraEpgUrls ?? [])].map((u) => u.trim()).filter(Boolean))];
     if (!urls.length) {
       set({ status: current ? 'ready' : 'idle' });
       return;
@@ -92,20 +152,21 @@ export const useEpg = create<EpgState>()((set, get) => ({
     set({ status: current ? 'ready' : 'loading', error: null });
     try {
       let merged: EpgData | null = null;
-      const errors: string[] = [];
-      for (const url of urls.slice(0, 4)) {
+      const sources: EpgSourceStatus[] = [];
+      for (const url of urls.slice(0, 8)) {
         try {
           const d = await downloadEpg(url, profile, !!opts.force);
           merged = merged ? merge(merged, d) : d;
+          sources.push({ url, ok: true, channels: Object.keys(d.programmes).length });
         } catch (e) {
-          errors.push((e as Error).message);
+          sources.push({ url, ok: false, channels: 0, error: (e as Error).message });
         }
       }
       if (get().profileId !== profile.id) return;
-      if (!merged) throw new Error(errors[0] ?? 'EPG unavailable');
+      if (!merged) throw new Error(sources.find((x) => x.error)?.error ?? 'EPG unavailable');
       buildResolver(merged);
       await idbSet(`epg:${profile.id}`, merged).catch(() => {});
-      set({ data: merged, status: 'ready', error: null, version: get().version + 1 });
+      set({ data: merged, status: 'ready', error: null, sources, version: get().version + 1 });
     } catch (e) {
       if (get().profileId !== profile.id) return;
       set({ status: current ? 'ready' : 'error', error: (e as Error).message });
@@ -120,9 +181,7 @@ export function programmesFor(ch: Channel | undefined): Programme[] {
   if (!data || !resolver) return [];
   const cached = resolvedCache.get(ch.id);
   if (cached) return cached;
-  let key = ch.epgId ? resolver.byId.get(ch.epgId.toLowerCase()) : undefined;
-  if (!key) key = resolver.byName.get(normalize(ch.name));
-  if (!key && ch.epgId) key = resolver.byName.get(normalize(ch.epgId));
+  const key = resolveGuideKey(ch);
   const shift = useSettings.getState().epgShiftHours * 3_600_000;
   const list = key ? (data.programmes[key] ?? []).map((t) => toProgramme(t, shift)) : [];
   resolvedCache.set(ch.id, list);

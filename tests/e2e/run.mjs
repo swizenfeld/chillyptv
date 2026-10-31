@@ -211,6 +211,30 @@ await step('backup feed takes over when a match stream dies', async () => {
   await page.keyboard.press('Escape');
 });
 
+await step('guide fixes: extra source and manual link', async () => {
+  await page.goto(`${APP}/settings`);
+  const card = page.locator('section.card', { has: page.getByRole('heading', { name: 'TV guide' }) });
+  await card.locator('.guide-sources .value').waitFor();
+  const before = await card.locator('.guide-sources .value').textContent();
+  await card.locator('textarea').fill(`${MOCK}/extra-epg.xml.gz`);
+  await card.getByRole('button', { name: 'Save and load' }).click();
+  await page.waitForFunction(() => document.querySelectorAll('.source-list li').length >= 2, null, { timeout: 60000 });
+  await page.waitForFunction((b) => document.querySelector('.guide-sources .value')?.textContent !== b, before, { timeout: 30000 });
+  if (!/\(100%\)/.test(await card.locator('.guide-sources .value').textContent())) throw new Error('coverage did not reach 100%');
+  // A news channel relinked by hand to another guide channel, then reset.
+  await page.goto(`${APP}/live`);
+  await page.locator('.cat-item', { hasText: 'News' }).click();
+  await page.locator('.channel-row').nth(4).click();
+  await page.getByRole('button', { name: 'Wrong guide? Fix it' }).click();
+  await page.locator('.modal input[aria-label="Search"]').fill('Metro News 1');
+  await page.locator('.modal .overlay-ch', { hasText: 'ch1.mock' }).click();
+  await page.locator('.toast', { hasText: 'now uses the guide of Metro News 1' }).waitFor();
+  await page.getByRole('button', { name: 'Wrong guide? Fix it' }).click();
+  await page.getByText('You linked this channel to').waitFor();
+  await page.getByRole('button', { name: 'Use automatic matching' }).click();
+  await page.locator('.toast', { hasText: 'back to automatic' }).waitFor();
+});
+
 await step('MPEG-TS live via mpegts.js', async () => {
   await page.evaluate(async () => {
     const raw = JSON.parse(localStorage.getItem('chilly.profiles'));

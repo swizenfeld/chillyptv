@@ -14,6 +14,8 @@ export interface Profile {
   m3uFileName?: string;
   /** Optional XMLTV override (otherwise from the playlist header / Xtream xmltv.php). */
   epgUrl?: string;
+  /** Extra XMLTV sources merged after the provider's guide (fill gaps). */
+  extraEpgUrls?: string[];
   /** Custom User-Agent sent to the provider (some panels require a specific one). */
   userAgent?: string;
   output: 'm3u8' | 'ts';

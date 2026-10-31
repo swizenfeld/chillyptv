@@ -7,6 +7,7 @@
  * Media is generated locally with ffmpeg on first start (mock/media).
  */
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
+import { gzipSync } from 'node:zlib';
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
 import { createReadStream, existsSync, mkdirSync, statSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -145,6 +146,9 @@ const FIXTURES: MockFixture[] = [
   { id: 711, league: 'conmebol.sudamericana', home: 'Racing Club', away: 'Cruzeiro', offsetMin: 270, broadcasts: ['ESPN'] },
 ];
 const killed = new Set<string>();
+const MUSIC_CAT = LIVE_CATS.indexOf('Music') + 1;
+for (const c of live) if (c.cat === MUSIC_CAT) c.epgId = '';
+const hasProviderGuide = (c: LiveCh) => c.cat !== MUSIC_CAT;
 const fixtureStart = (f: MockFixture) => SPORTS_ANCHOR + f.offsetMin * 60_000;
 
 const movies = Array.from({ length: 60 }, (_, i) => ({
@@ -341,7 +345,7 @@ function handleApi(req: IncomingMessage, res: ServerResponse, q: URLSearchParams
     case 'get_short_epg':
     case 'get_simple_data_table': {
       const ch = live.find((c) => String(c.id) === q.get('stream_id'));
-      if (!ch) return json(res, { epg_listings: [] });
+      if (!ch || !hasProviderGuide(ch)) return json(res, { epg_listings: [] });
       const full = action === 'get_simple_data_table';
       let list = epgFor(ch, full ? now - 3 * 86400_000 : now - 3600_000, now + (full ? 2 : 1) * 86400_000);
       if (!full) list = list.filter((p) => p.end > now).slice(0, Number(q.get('limit') ?? 4));
@@ -382,11 +386,32 @@ function m3u(req: IncomingMessage, res: ServerResponse) {
   res.end(lines.join('\n'));
 }
 
+/**
+ * A third-party guide (gzipped XMLTV) covering the music channels under its own ids and
+ * slightly different names ("WAVE MUSIC 3" for "Wave Music 3 HD"), plus a decoy channel.
+ */
+function extraEpg(res: ServerResponse) {
+  const now = Date.now();
+  const out = ['<?xml version="1.0" encoding="UTF-8"?>', '<tv generator-info-name="extra-guide">'];
+  const music = live.filter((c) => c.cat === MUSIC_CAT);
+  for (const c of music) out.push(`<channel id="extra.music.${c.id}"><display-name>${escXml(c.name.replace(/ HD$/, '').toUpperCase())}</display-name></channel>`);
+  out.push('<channel id="extra.decoy"><display-name>Nothing Relevant</display-name></channel>');
+  for (const c of music) {
+    for (let t = Math.floor((now - 86400_000) / 3600_000) * 3600_000; t < now + 86400_000; t += 3600_000) {
+      out.push(`<programme start="${xmltvDate(t)}" stop="${xmltvDate(t + 3600_000)}" channel="extra.music.${c.id}"><title>Extra Guide: ${escXml(c.name.replace(/ HD$/, ''))} Live Set</title></programme>`);
+    }
+  }
+  out.push('</tv>');
+  res.writeHead(200, { 'Content-Type': 'application/gzip' });
+  res.end(gzipSync(out.join('\n')));
+}
+
 function xmltv(_req: IncomingMessage, res: ServerResponse) {
   const now = Date.now();
   const out = ['<?xml version="1.0" encoding="UTF-8"?>', '<tv generator-info-name="chillyptv-mock">'];
-  for (const c of live) out.push(`<channel id="${c.epgId}"><display-name>${escXml(c.name)}</display-name></channel>`);
+  for (const c of live) if (hasProviderGuide(c)) out.push(`<channel id="${c.epgId}"><display-name>${escXml(c.name)}</display-name></channel>`);
   for (const c of live) {
+    if (!hasProviderGuide(c)) continue;
     for (const p of epgFor(c, now - 3 * 86400_000, now + 2 * 86400_000)) {
       out.push(`<programme start="${xmltvDate(p.start)}" stop="${xmltvDate(p.end)}" channel="${c.epgId}"><title lang="en">${escXml(p.title)}</title><desc lang="en">${escXml(p.desc)}</desc><category>Mock</category></programme>`);
     }
@@ -403,6 +428,7 @@ const server = createServer((req, res) => {
   if (p === '/player_api.php') return handleApi(req, res, url.searchParams);
   if (p === '/get.php') return m3u(req, res);
   if (p === '/xmltv.php') return xmltv(req, res);
+  if (p === '/extra-epg.xml.gz') return extraEpg(res);
   let m = p.match(/^\/logo\/(\d+)\.svg$/);
   if (m) return svg(res, live.find((c) => String(c.id) === m![1])?.name ?? 'TV', (+m[1] * 47) % 360, 200, 200);
   m = p.match(/^\/(poster|backdrop)\/(\d+)\.svg$/);

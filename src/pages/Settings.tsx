@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import { del } from 'idb-keyval';
 import { Download, EyeOff, Keyboard, Lock, Palette, PlayCircle, RefreshCw, Shield, Upload, Wifi, CalendarClock, Database, Cloud, Trophy } from 'lucide-react';
 import { SportsSettings } from '../components/SportsSettings';
+import { GuideSources } from '../components/GuideSources';
 import { useSettings, isAdultName, type AspectMode, type Theme } from '../store/settings';
 import { useCatalog } from '../store/catalog';
 import { useEpg } from '../store/epg';
@@ -146,6 +147,7 @@ export function SettingsPage() {
         >
           <RefreshCw size={16} /> Refresh guide now
         </button>
+        <GuideSources />
         <Toggle
           checked={s.notifications}
           onChange={(notifications) => {

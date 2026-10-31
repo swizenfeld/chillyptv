@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useVirtualizer } from '@tanstack/react-virtual';
-import { Archive, Bell, BellRing, Clock, Heart, LayoutGrid, List, Maximize2, Play, Search, Star, Trophy, Tv } from 'lucide-react';
+import { Archive, Bell, BellRing, Clock, Heart, LayoutGrid, List, Maximize2, Play, Search, Star, Trophy, Tv, Wrench } from 'lucide-react';
 import { useCatalog } from '../store/catalog';
 import { useActiveProfile } from '../store/profiles';
 import { useFavorites, useHistory, useLibrary } from '../store/library';
@@ -10,6 +10,7 @@ import { useSettings, isCategoryLocked, isUnlocked } from '../store/settings';
 import { liveSession, usePlay } from '../hooks/usePlay';
 import { CategoryList } from '../components/CategoryList';
 import { SportsToday } from '../components/SportsToday';
+import { FixGuideDialog } from '../components/FixGuide';
 import { useSports } from '../store/SportsProvider';
 import { Empty, Img, ProgressBar, Spinner, useNow } from '../components/ui';
 import { VideoPlayer } from '../player/VideoPlayer';
@@ -264,6 +265,7 @@ export function ChannelEpg({ channel, compact }: { channel: Channel; compact?: b
   const play = usePlay();
   const now = useNow(30000);
   const listRef = useRef<HTMLUListElement>(null);
+  const [fixing, setFixing] = useState(false);
 
   const visible = useMemo(() => {
     const past = channel.archive ? list.filter((p) => p.end <= now && canCatchup(channel, p, now)).slice(-24) : [];
@@ -279,7 +281,17 @@ export function ChannelEpg({ channel, compact }: { channel: Channel; compact?: b
   }, [channel.id, loading, visible.length]);
 
   if (loading) return <Spinner size={20} label="Loading guide…" />;
-  if (!visible.length) return <p className="muted pad">No programme guide for this channel.</p>;
+  const fixDialog = fixing && <FixGuideDialog channel={channel} onClose={() => setFixing(false)} />;
+  if (!visible.length)
+    return (
+      <div className="epg-missing">
+        <p className="muted">No programme guide for this channel.</p>
+        <button className="btn small" onClick={() => setFixing(true)}>
+          <Wrench size={14} /> Fix guide
+        </button>
+        {fixDialog}
+      </div>
+    );
 
   const toggleReminder = (p: Programme) => {
     if (!profile) return;
@@ -295,6 +307,13 @@ export function ChannelEpg({ channel, compact }: { channel: Channel; compact?: b
 
   let lastDay = '';
   return (
+    <>
+      <div className="epg-tools">
+        <button className="link-btn small" onClick={() => setFixing(true)}>
+          <Wrench size={13} /> Wrong guide? Fix it
+        </button>
+      </div>
+      {fixDialog}
     <ul className="epg-list" ref={listRef}>
       {visible.map((p) => {
         const isNow = p.start <= now && p.end > now;
@@ -333,5 +352,6 @@ export function ChannelEpg({ channel, compact }: { channel: Channel; compact?: b
         );
       })}
     </ul>
+    </>
   );
 }

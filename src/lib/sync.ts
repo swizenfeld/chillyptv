@@ -10,7 +10,7 @@ interface SyncBlob {
   updatedAt: number;
   profiles: Profile[];
   activeId: string | null;
-  library: Pick<ReturnType<typeof useLibrary.getState>, 'favorites' | 'history' | 'reminders' | 'multiview'>;
+  library: Pick<ReturnType<typeof useLibrary.getState>, 'favorites' | 'history' | 'reminders' | 'multiview' | 'epgOverrides'>;
   settings: Partial<Settings>;
 }
 
@@ -27,7 +27,7 @@ export function exportState(): SyncBlob {
     updatedAt: Number(localStorage.getItem(LOCAL_KEY) ?? Date.now()),
     profiles: p.profiles,
     activeId: p.activeId,
-    library: { favorites: lib.favorites, history: lib.history, reminders: lib.reminders, multiview: lib.multiview },
+    library: { favorites: lib.favorites, history: lib.history, reminders: lib.reminders, multiview: lib.multiview, epgOverrides: lib.epgOverrides },
     settings,
   };
 }

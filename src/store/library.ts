@@ -54,6 +54,9 @@ interface LibraryState {
   reminders: Reminder[];
   multiview: Record<string, MultiViewState>;
   lastChannel: Record<string, string[]>;
+  /** Per playlist: channelId → "x:<xmltv channel id>" or "c:<other channel id>" (borrow its guide). */
+  epgOverrides: Record<string, Record<string, string>>;
+  setEpgOverride: (profileId: string, channelId: string, value: string | null) => void;
   toggleFavorite: (profileId: string, item: Omit<FavItem, 'addedAt'>) => void;
   moveFavorite: (profileId: string, kind: FavKind, id: string, dir: -1 | 1) => void;
   recordProgress: (profileId: string, item: Omit<HistoryItem, 'updatedAt'>) => void;
@@ -64,7 +67,7 @@ interface LibraryState {
   markReminder: (id: string) => void;
   setMultiview: (profileId: string, mv: MultiViewState) => void;
   pushChannel: (profileId: string, channelId: string) => void;
-  replaceAll: (data: Partial<Pick<LibraryState, 'favorites' | 'history' | 'reminders' | 'multiview'>>) => void;
+  replaceAll: (data: Partial<Pick<LibraryState, 'favorites' | 'history' | 'reminders' | 'multiview' | 'epgOverrides'>>) => void;
 }
 
 const MAX_HISTORY = 200;
@@ -77,6 +80,14 @@ export const useLibrary = create<LibraryState>()(
       reminders: [],
       multiview: {},
       lastChannel: {},
+      epgOverrides: {},
+      setEpgOverride: (profileId, channelId, value) =>
+        set((s) => {
+          const mine = { ...(s.epgOverrides[profileId] ?? {}) };
+          if (value) mine[channelId] = value;
+          else delete mine[channelId];
+          return { epgOverrides: { ...s.epgOverrides, [profileId]: mine } };
+        }),
       toggleFavorite: (profileId, item) =>
         set((s) => {
           const list = s.favorites[profileId] ?? [];
