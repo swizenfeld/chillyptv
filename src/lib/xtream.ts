@@ -1,4 +1,4 @@
-import { fetchUpstreamJson } from './api';
+import { explainSourceError, fetchUpstreamJson } from './api';
 import { yearFromName } from './format';
 import type { AccountInfo, Catalog, Category, Channel, Episode, MediaInfo, Movie, Profile, Programme, SeriesDetails, SeriesItem } from './types';
 
@@ -64,7 +64,12 @@ export class XtreamClient {
   }
 
   async account(signal?: AbortSignal): Promise<AccountInfo> {
-    const data = await this.get({}, signal);
+    let data: Json;
+    try {
+      data = await this.get({}, signal);
+    } catch (e) {
+      throw explainSourceError(e, this.base, 'xtream');
+    }
     const ui = data?.user_info;
     if (!ui || String(ui.auth) !== '1') throw new Error('Login failed — check the username and password.');
     const si = data.server_info ?? {};

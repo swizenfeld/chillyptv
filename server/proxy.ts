@@ -6,6 +6,44 @@ import { assertAllowedTarget } from './guard.js';
 const PASS_RESPONSE_HEADERS = ['content-type', 'content-length', 'content-range', 'accept-ranges', 'last-modified', 'etag'];
 const CONNECT_TIMEOUT_MS = Number(process.env.CHILLY_PROXY_TIMEOUT_MS ?? 20000);
 
+function hostOf(url: string): string {
+  try {
+    return new URL(url).host;
+  } catch {
+    return url;
+  }
+}
+
+/** Turns undici's opaque "fetch failed" into the network cause a user can act on. */
+export function describeFetchError(e: unknown, url: string): string {
+  const host = hostOf(url);
+  const cause = (e as { cause?: { code?: string; message?: string } })?.cause;
+  switch (cause?.code) {
+    case 'ECONNREFUSED':
+      return `${host} refused the connection (nothing is listening on that port)`;
+    case 'ENOTFOUND':
+    case 'EAI_AGAIN':
+      return `The server name ${new URL(url).hostname} could not be found`;
+    case 'ETIMEDOUT':
+    case 'UND_ERR_CONNECT_TIMEOUT':
+      return `Timed out connecting to ${host}`;
+    case 'ECONNRESET':
+    case 'UND_ERR_SOCKET':
+      return `${host} closed the connection unexpectedly`;
+    case 'EHOSTUNREACH':
+    case 'ENETUNREACH':
+      return `${host} is unreachable from the ChillyPTV server`;
+    case 'CERT_HAS_EXPIRED':
+    case 'DEPTH_ZERO_SELF_SIGNED_CERT':
+    case 'SELF_SIGNED_CERT_IN_CHAIN':
+    case 'UNABLE_TO_VERIFY_LEAF_SIGNATURE':
+    case 'ERR_TLS_CERT_ALTNAME_INVALID':
+      return `${host} has an invalid HTTPS certificate (try http:// if the provider supports it)`;
+    default:
+      return `Could not connect to ${host}${cause?.message ? `: ${cause.message}` : ''}`;
+  }
+}
+
 /** True when a response body is an HLS media/master playlist (not a channel-list M3U). */
 export function looksLikeHls(contentType: string, url: string): boolean {
   const ct = contentType.toLowerCase();
@@ -74,7 +112,8 @@ export async function handleProxy(req: IncomingMessage, res: ServerResponse, par
     clearTimeout(timer);
     res.off('close', onClose);
     if (controller.signal.aborted && res.destroyed) return;
-    return sendError(res, 502, `Upstream request failed: ${(e as Error).message}`);
+    const timedOut = controller.signal.aborted;
+    return sendError(res, timedOut ? 504 : 502, timedOut ? `Timed out after ${Math.round(CONNECT_TIMEOUT_MS / 1000)}s waiting for ${hostOf(target)}` : describeFetchError(e, target));
   }
   clearTimeout(timer);
 

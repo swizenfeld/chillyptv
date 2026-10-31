@@ -2,7 +2,7 @@ import { create } from 'zustand';
 import { get as idbGet, set as idbSet } from 'idb-keyval';
 import { XtreamClient } from '../lib/xtream';
 import { catalogFromM3u } from '../lib/m3uSource';
-import { fetchUpstreamText } from '../lib/api';
+import { explainSourceError, fetchUpstreamText } from '../lib/api';
 import type { AccountInfo, Catalog, Category, Channel, ContentKind, Movie, Profile, SeriesItem } from '../lib/types';
 
 const STALE_MS = 12 * 60 * 60 * 1000;
@@ -52,7 +52,13 @@ export async function fetchCatalog(profile: Profile, signal?: AbortSignal): Prom
     return { catalog, account };
   }
   let text: string | undefined;
-  if (profile.m3uUrl) text = await fetchUpstreamText(profile.m3uUrl, { ua: profile.userAgent, signal });
+  if (profile.m3uUrl) {
+    try {
+      text = await fetchUpstreamText(profile.m3uUrl, { ua: profile.userAgent, signal });
+    } catch (e) {
+      throw explainSourceError(e, profile.m3uUrl, 'm3u');
+    }
+  }
   else text = await idbGet<string>(`m3u:${profile.id}`);
   if (!text) throw new Error('Playlist is empty or missing.');
   if (!text.trimStart().startsWith('#EXTM3U') && !text.includes('#EXTINF')) throw new Error('That does not look like an M3U playlist.');

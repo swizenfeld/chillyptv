@@ -98,9 +98,37 @@ export class HttpError extends Error {
   constructor(
     public status: number,
     message: string,
+    /** "network": the ChillyPTV server could not reach the provider; "http": the provider answered with this status. */
+    public kind: 'network' | 'http' = 'http',
   ) {
     super(message);
   }
+}
+
+function hostOf(url: string): string {
+  try {
+    return new URL(url).host;
+  } catch {
+    return url;
+  }
+}
+
+/** Rewrites a failed login/playlist request as a message that says what to check. */
+export function explainSourceError(e: unknown, url: string, kind: 'xtream' | 'm3u'): Error {
+  if (!(e instanceof HttpError)) return e as Error;
+  const host = hostOf(url);
+  if (e.kind === 'network') return new Error(`${e.message}. Check the server address and port, and that the provider is online.`);
+  if (e.status === 404)
+    return new Error(
+      kind === 'xtream'
+        ? `No Xtream Codes service at ${host} (HTTP 404). Check the server URL and port: it is the part before /get.php or /player_api.php.`
+        : 'Playlist not found at that address (HTTP 404). Check that the link is complete and still valid.',
+    );
+  if (e.status === 401 || e.status === 403)
+    return new Error(`${host} refused access (HTTP ${e.status}). The subscription may be blocked or expired, or the provider requires a specific User-Agent (see Advanced options).`);
+  if (e.status === 429) return new Error(`${host} is rate-limiting requests (HTTP 429). Wait a minute and try again.`);
+  if (e.status >= 500) return new Error(`${host} had a server error (HTTP ${e.status}). Try again in a few minutes.`);
+  return new Error(`${host} answered with HTTP ${e.status}.`);
 }
 
 export async function fetchUpstream(url: string, opts: UpstreamOpts & { signal?: AbortSignal } = {}): Promise<Response> {
@@ -117,14 +145,17 @@ export async function fetchUpstream(url: string, opts: UpstreamOpts & { signal?:
     );
   }
   if (!res.ok) {
+    // Real provider responses carry X-Final-Url; anything else is the proxy reporting a connection problem.
+    const fromProxy = proxyActive() && !res.headers.get('x-final-url');
     let detail = '';
-    try {
-      const body = await res.clone().json();
-      detail = body?.error ?? '';
-    } catch {
-      /* not json */
+    if (fromProxy) {
+      try {
+        detail = ((await res.clone().json()) as { error?: string })?.error ?? '';
+      } catch {
+        /* not json */
+      }
     }
-    throw new HttpError(res.status, detail || `Provider returned HTTP ${res.status}`);
+    throw new HttpError(res.status, detail || `Provider returned HTTP ${res.status}`, fromProxy ? 'network' : 'http');
   }
   return res;
 }
@@ -135,7 +166,7 @@ export async function fetchUpstreamJson<T>(url: string, opts: UpstreamOpts & { s
   try {
     return JSON.parse(text) as T;
   } catch {
-    throw new Error('Provider returned an invalid response (not JSON). Check the server URL.');
+    throw new Error("That address answered, but not like an Xtream Codes server (the response isn't JSON). Check the server URL and port.");
   }
 }
 

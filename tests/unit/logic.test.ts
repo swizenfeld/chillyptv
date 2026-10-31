@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { buildM3uCatchupUrl } from '../../src/lib/catchup';
 import { matchScore, searchList, normalize } from '../../src/lib/search';
 import { formatInTimezone, normalizeServer, parseXtreamLink, parseXtreamListings } from '../../src/lib/xtream';
-import { rewriteHlsPlaylist, looksLikeHls } from '../../server/proxy';
+import { rewriteHlsPlaylist, looksLikeHls, describeFetchError } from '../../server/proxy';
 import { buildRemuxArgs } from '../../server/remux';
 import { isPrivateAddress } from '../../server/guard';
 import { planCandidates } from '../../src/player/engine';
@@ -78,6 +78,13 @@ describe('proxy', () => {
     expect(out).toContain('URI="P(http://host/path/audio/en.m3u8)"');
     expect(out).toContain('P(http://host/path/seg1.ts)');
     expect(out).toContain('P(https://cdn/abs.ts)');
+  });
+  it('explains connection failures by their network cause', () => {
+    const err = (code: string) => Object.assign(new TypeError('fetch failed'), { cause: { code } });
+    expect(describeFetchError(err('ECONNREFUSED'), 'http://tv.example:8080/player_api.php')).toBe('tv.example:8080 refused the connection (nothing is listening on that port)');
+    expect(describeFetchError(err('ENOTFOUND'), 'http://tv.example:8080/x')).toBe('The server name tv.example could not be found');
+    expect(describeFetchError(err('CERT_HAS_EXPIRED'), 'https://tv.example/x')).toMatch(/invalid HTTPS certificate/);
+    expect(describeFetchError(new TypeError('fetch failed'), 'http://tv.example/x')).toBe('Could not connect to tv.example');
   });
   it('identifies private addresses', () => {
     expect(isPrivateAddress('192.168.1.5')).toBe(true);
