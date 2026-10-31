@@ -47,13 +47,13 @@ export function SportsToday({ data, filter, selectedId, onSelect, onOpen }: {
           ))}
         </div>
         <p className="sports-source">
-          {data.source === 'feed' ? 'Fixtures from ESPN, matched to your TV guide.' : 'Matches found in your TV guide.'}
-          {data.feedError && ` Online fixtures unavailable, so only guide listings are shown.`}
+          {data.source === 'feed' ? 'Fixtures from ESPN, matched to your TV guide and channel names.' : 'Matches found in your TV guide.'}
+          {data.feedError && ` ${data.feedError}, so only guide listings are shown.`}
         </p>
       </div>
       {!matches.length ? (
         <Empty icon={<Trophy size={36} />} title={filter ? `No matches for “${filter}”` : 'No matches today'}>
-          <p>None of the competitions you follow have fixtures today. Choose competitions in Settings → Sports.</p>
+          {!filter && <EmptyReason data={data} />}
         </Empty>
       ) : (
         <div className="sports-scroll">
@@ -108,7 +108,7 @@ function MatchCard({ m, selectedId, onSelect, onOpen }: { m: SportsMatch; select
               className={`match-ch ${selectedId === c.channel.id ? 'active' : ''} ${c.score < 1 ? 'weak' : ''}`}
               onClick={() => onSelect(c.channel)}
               onDoubleClick={() => onOpen(c.channel)}
-              title={c.via === 'broadcaster' ? `${c.channel.name} is listed as a broadcaster; the guide doesn't confirm it` : c.programme?.title}
+              title={c.via === 'broadcaster' ? `${c.channel.name} is listed as a broadcaster; the guide doesn't confirm it` : c.via === 'channel' ? 'The channel name lists this match' : c.programme?.title}
             >
               <Img src={c.channel.logo} alt="" className="match-ch-logo" />
               <span className="match-ch-name">{c.channel.name}</span>
@@ -120,5 +120,35 @@ function MatchCard({ m, selectedId, onSelect, onOpen }: { m: SportsMatch; select
         <p className="match-none">{f.broadcasts.length ? `Not found in your channels · TV: ${f.broadcasts.slice(0, 3).join(', ')}` : 'Not found in your channels'}</p>
       )}
     </article>
+  );
+}
+
+/** Says why the list is empty, so the cause is visible instead of guessed. */
+function EmptyReason({ data }: { data: SportsData }) {
+  const d = data.diagnostics;
+  const n = (x: number) => x.toLocaleString();
+  return (
+    <div className="sports-why">
+      {d.feed === 'ok' && <p>ESPN lists no matches today for the competitions you follow ({d.feedFixtures} fixtures). Choose more competitions in Settings → Sports.</p>}
+      {d.feed !== 'ok' && d.programmesToday === 0 && (
+        <p>
+          Your provider's TV guide has no listings for today, so matches can only be found through the online fixtures feed
+          {d.feed === 'off' ? ', which is turned off in Settings → Sports.' : ', which is unavailable right now.'}
+        </p>
+      )}
+      {d.feed !== 'ok' && d.programmesToday > 0 && <p>No programme titles in today's guide name a match from the competitions you follow.</p>}
+      <dl className="sports-diag">
+        <div>
+          <dt>Online fixtures</dt>
+          <dd>{d.feed === 'ok' ? `OK · ${d.feedFixtures} today` : d.feed === 'off' ? 'Off' : (data.feedError ?? 'Unavailable')}</dd>
+        </div>
+        <div>
+          <dt>TV guide today</dt>
+          <dd>
+            {n(d.programmesToday)} listings on {n(d.channelsWithGuide)} of {n(d.channels)} channels
+          </dd>
+        </div>
+      </dl>
+    </div>
   );
 }

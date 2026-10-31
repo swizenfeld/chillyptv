@@ -21,14 +21,14 @@ export const LEAGUES: League[] = [
   { id: 'uefa.champions', name: 'UEFA Champions League', group: 'Champions', keywords: ['champions league', 'uefa champions', 'ucl', 'liga de campeones', 'ligue des champions'], defaultOn: true },
   { id: 'concacaf.champions', name: 'CONCACAF Champions Cup', group: 'Champions', keywords: ['concacaf champions', 'champions cup'], defaultOn: true },
   { id: 'conmebol.libertadores', name: 'Copa Libertadores', group: 'Champions', keywords: ['libertadores'], defaultOn: true },
-  { id: 'eng.1', name: 'Premier League', group: 'England', keywords: ['premier league', 'epl', 'barclays premier'], defaultOn: true },
+  { id: 'eng.1', name: 'Premier League', group: 'England', keywords: ['premier league', 'epl', 'barclays premier', 'liga premier', 'futbol ingles'], defaultOn: true },
   { id: 'eng.2', name: 'EFL Championship', group: 'England', keywords: ['efl championship', 'sky bet championship'], defaultOn: true },
   { id: 'eng.fa', name: 'FA Cup', group: 'England', keywords: ['fa cup', 'emirates fa cup'], defaultOn: true },
   { id: 'eng.league_cup', name: 'Carabao Cup', group: 'England', keywords: ['carabao cup', 'efl cup', 'league cup'], defaultOn: true },
   { id: 'esp.1', name: 'LaLiga', group: 'Spain', keywords: ['laliga', 'la liga', 'liga ea sports', 'liga espanola', 'primera division espana'], defaultOn: true },
   { id: 'esp.2', name: 'LaLiga 2', group: 'Spain', keywords: ['laliga 2', 'laliga hypermotion', 'segunda division'], defaultOn: false },
   { id: 'esp.copa_del_rey', name: 'Copa del Rey', group: 'Spain', keywords: ['copa del rey'], defaultOn: true },
-  { id: 'arg.1', name: 'Liga Profesional', group: 'Argentina', keywords: ['liga profesional', 'lpf', 'torneo betano', 'futbol argentino', 'primera division argentina', 'liga argentina'], defaultOn: true },
+  { id: 'arg.1', name: 'Liga Profesional', group: 'Argentina', keywords: ['liga profesional', 'lpf', 'torneo betano', 'futbol argentino', 'primera division argentina', 'liga argentina', 'torneo apertura', 'torneo clausura', 'copa de la liga'], defaultOn: true },
   { id: 'arg.copa', name: 'Copa Argentina', group: 'Argentina', keywords: ['copa argentina'], defaultOn: true },
 ];
 
@@ -199,6 +199,23 @@ export function scorePrepared(text: string, start: number, end: number, pf: Prep
   if (HEAD_TO_HEAD.test(` ${title} `)) return 0;
   if ((home || away) && pf.league.some((k) => mentions(text, k))) return 0.6;
   return 0;
+}
+
+/**
+ * Event / PPV channels that carry the match in their name, e.g.
+ * "LAT| ARG FANATIZ PPV 3: Boca Juniors vs River Plate 19:00". `nameNorm` must be normalised.
+ */
+export function channelNameScore(nameNorm: string, pf: PreparedFixture): number {
+  return pf.home.some((n) => mentions(nameNorm, n)) && pf.away.some((n) => mentions(nameNorm, n)) ? 1 : 0;
+}
+
+/** Cheap test on raw text before normalising it: could it name a tracked competition? */
+export function competitionHint(leagueIds: string[]): RegExp {
+  const accent: Record<string, string> = { a: '[aáà]', e: '[eéè]', i: '[ií]', o: '[oóò]', u: '[uúü]', n: '[nñ]', c: '[cç]' };
+  const words = leagueIds
+    .flatMap((id) => LEAGUE_BY_ID.get(id)?.keywords ?? [])
+    .map((k) => [...k].map((ch) => (ch === ' ' ? '[\\s._:-]*' : (accent[ch] ?? ch.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')))).join(''));
+  return new RegExp(words.length ? words.join('|') : '(?!)', 'i');
 }
 
 /** Channel names that look like one of the fixture's broadcasters ("TNT Sports 1 HD" ~ "TNT Sports"). */

@@ -181,6 +181,8 @@ await step('sports today: fixtures matched to channels', async () => {
   await live.locator('.match-ch').nth(1).waitFor({ timeout: 30000 });
   const chans = await live.locator('.match-ch-name').allTextContents();
   if (chans.length < 2) throw new Error(`expected 2+ channels, got ${chans}`);
+  // Event/PPV channels carry the match in their name (no guide entry at all).
+  await page.locator('.match-card', { hasText: 'Boca Juniors' }).locator('.match-ch', { hasText: 'PPV 3' }).waitFor();
   // A fixture with no listing says so and names the broadcaster.
   await page.locator('.match-card', { hasText: 'Levante' }).getByText('Not found in your channels').waitFor();
   await page.screenshot({ path: join(OUT, '04b-sports-today.png') });

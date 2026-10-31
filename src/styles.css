@@ -3359,3 +3359,37 @@ div.match-ch-logo {
   width: 16px;
   height: 16px;
 }
+
+.sports-why {
+  max-width: 520px;
+  text-align: left;
+}
+.sports-why p {
+  margin: 0 0 12px;
+}
+.sports-diag {
+  margin: 0;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 4px 12px;
+}
+.sports-diag div {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border);
+  font-size: 13px;
+}
+.sports-diag div:last-child {
+  border-bottom: 0;
+}
+.sports-diag dt {
+  color: var(--muted);
+}
+.sports-diag dd {
+  margin: 0;
+  color: var(--text);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}

@@ -4,23 +4,34 @@ import { normalize } from '../lib/search';
 import { useCatalog } from './catalog';
 import { programmesFor, useEpg } from './epg';
 import { isCategoryLocked, isUnlocked, useSettings } from './settings';
-import { broadcasterScore, detectGuideFixture, fixtureKey, prepareFixture, scorePrepared, stateAt, type Fixture } from '../../shared/sports';
+import {
+  broadcasterScore, channelNameScore, competitionHint, detectGuideFixture, fixtureKey, prepareFixture, scorePrepared, stateAt, type Fixture,
+} from '../../shared/sports';
 import type { Channel, Programme } from '../lib/types';
 
 const API = `${import.meta.env.BASE_URL}api`;
 
 export interface MatchChannel {
   channel: Channel;
-  /** 1 = guide names both teams; 0.6 = one team + competition; 0.35 = channel is a listed broadcaster. */
+  /** 1 = guide or channel name names both teams; 0.6 = one team + competition; 0.35 = listed broadcaster. */
   score: number;
   programme?: Programme;
-  via: 'guide' | 'broadcaster';
+  via: 'guide' | 'channel' | 'broadcaster';
 }
 
 export interface SportsMatch {
   fixture: Fixture;
   state: Fixture['state'];
   channels: MatchChannel[];
+}
+
+export interface SportsDiagnostics {
+  feed: 'ok' | 'off' | 'error';
+  feedFixtures: number;
+  /** Guide entries for today across all visible channels. */
+  programmesToday: number;
+  channelsWithGuide: number;
+  channels: number;
 }
 
 export interface SportsToday {
@@ -31,6 +42,7 @@ export interface SportsToday {
   source: 'feed' | 'guide';
   loading: boolean;
   feedError: string | null;
+  diagnostics: SportsDiagnostics;
 }
 
 function todayWindow(now = Date.now()): { from: number; to: number } {
@@ -39,9 +51,15 @@ function todayWindow(now = Date.now()): { from: number; to: number } {
   return { from: d.getTime(), to: d.getTime() + 86_400_000 };
 }
 
+interface FeedState {
+  fixtures: Fixture[] | null;
+  error: string | null;
+  loading: boolean;
+}
+
 /** Polls the server's fixtures feed (ESPN) for the tracked leagues. */
-function useFixtureFeed(leagues: string[], enabled: boolean): { fixtures: Fixture[] | null; error: string | null; loading: boolean } {
-  const [state, setState] = useState<{ fixtures: Fixture[] | null; error: string | null; loading: boolean }>({ fixtures: null, error: null, loading: enabled });
+function useFixtureFeed(leagues: string[], enabled: boolean): FeedState {
+  const [state, setState] = useState<FeedState>({ fixtures: null, error: null, loading: enabled });
   const key = leagues.join(',');
   useEffect(() => {
     if (!enabled || !key) {
@@ -54,17 +72,22 @@ function useFixtureFeed(leagues: string[], enabled: boolean): { fixtures: Fixtur
       const { from, to } = todayWindow();
       try {
         const res = await fetch(`${API}/sports/fixtures?${new URLSearchParams({ leagues: key, from: String(from), to: String(to) })}`, { cache: 'no-store' });
-        const body = (await res.json()) as { fixtures?: Fixture[]; errors?: { league: string; error: string }[]; error?: string };
+        const body = (await res.json()) as { fixtures?: Fixture[]; errors?: { league: string; error: string }[]; leagues?: number; error?: string };
         if (!alive) return;
         if (!res.ok) throw new Error(body.error ?? `HTTP ${res.status}`);
-        const all = body.errors?.length && !body.fixtures?.length;
-        setState({ fixtures: all ? null : (body.fixtures ?? []), error: all ? `Fixtures feed unavailable (${body.errors![0].error})` : null, loading: false });
-        const live = body.fixtures?.some((f) => f.state === 'in');
-        timer = window.setTimeout(load, live ? 60_000 : 5 * 60_000);
+        // The feed is only "down" if every competition failed; one off-season league is not an outage.
+        const failed = body.errors?.length ?? 0;
+        const allFailed = failed > 0 && failed >= (body.leagues ?? leagues.length);
+        setState({
+          fixtures: allFailed ? null : (body.fixtures ?? []),
+          error: allFailed ? `ESPN could not be reached from your ChillyPTV server (${body.errors![0].error})` : null,
+          loading: false,
+        });
+        timer = window.setTimeout(load, body.fixtures?.some((f) => f.state === 'in') ? 60_000 : 5 * 60_000);
       } catch (e) {
         if (!alive) return;
         setState({ fixtures: null, error: (e as Error).message, loading: false });
-        timer = window.setTimeout(load, 5 * 60_000);
+        timer = window.setTimeout(load, 2 * 60_000);
       }
     };
     setState((s) => ({ ...s, loading: true }));
@@ -73,21 +96,26 @@ function useFixtureFeed(leagues: string[], enabled: boolean): { fixtures: Fixtur
       alive = false;
       window.clearTimeout(timer);
     };
-  }, [key, enabled]);
+  }, [key, enabled]); // eslint-disable-line react-hooks/exhaustive-deps
   return state;
 }
 
 interface IndexedProgramme {
   channel: Channel;
   p: Programme;
-  text: string;
-  title: string;
+  /** Normalised lazily: only entries near a kick-off (or with a competition hint) ever need it. */
+  text?: string;
+  title?: string;
 }
+
+const textOf = (ip: IndexedProgramme) => (ip.text ??= normalize(`${ip.p.title} ${ip.p.subtitle ?? ''} ${ip.p.desc ?? ''}`));
+const titleOf = (ip: IndexedProgramme) => (ip.title ??= normalize(ip.p.title));
 
 /**
  * Today's matches for the tracked competitions and the channels showing them.
- * Uses the online fixtures feed when the server can reach it, otherwise detects
- * matches straight from programme titles in the TV guide.
+ * Fixtures come from the online feed when the server can reach it, otherwise they
+ * are detected from programme titles. Channels are found through the TV guide,
+ * event/PPV channel names, and channels named after a listed broadcaster.
  */
 export function useSportsToday(): SportsToday {
   const settings = useSettings();
@@ -101,22 +129,31 @@ export function useSportsToday(): SportsToday {
     return () => window.clearInterval(t);
   }, []);
 
-  // Today's programmes on every visible channel, text normalised once.
-  const programmes = useMemo<IndexedProgramme[]>(() => {
+  // Visible channels (hidden and locked categories excluded) with normalised names.
+  const channels = useMemo(() => {
     if (!catalog || !index) return [];
-    const { from, to } = todayWindow();
     const hidden = new Set(settings.hiddenCategories);
-    const out: IndexedProgramme[] = [];
-    for (const ch of catalog.channels) {
-      if (hidden.has(ch.categoryId)) continue;
-      if (!isUnlocked() && isCategoryLocked(settings, ch.categoryId, index.categoryById.get(ch.categoryId)?.name ?? '')) continue;
+    return catalog.channels
+      .filter((ch) => !hidden.has(ch.categoryId) && (isUnlocked() || !isCategoryLocked(settings, ch.categoryId, index.categoryById.get(ch.categoryId)?.name ?? '')))
+      .map((ch) => ({ ch, name: normalize(ch.name) }));
+  }, [catalog, index, settings]);
+
+  // Today's guide entries; text is normalised on demand.
+  const guide = useMemo(() => {
+    const { from, to } = todayWindow();
+    const list: IndexedProgramme[] = [];
+    let withGuide = 0;
+    for (const { ch } of channels) {
+      let any = false;
       for (const p of programmesFor(ch)) {
         if (p.end <= from - 3 * 3_600_000 || p.start >= to) continue;
-        out.push({ channel: ch, p, text: normalize(`${p.title} ${p.subtitle ?? ''} ${p.desc ?? ''}`), title: normalize(p.title) });
+        list.push({ channel: ch, p });
+        any = true;
       }
+      if (any) withGuide++;
     }
-    return out;
-  }, [catalog, index, epgVersion, settings]); // eslint-disable-line react-hooks/exhaustive-deps
+    return { list, withGuide };
+  }, [channels, epgVersion]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const result = useMemo(() => {
     const source: 'feed' | 'guide' = feed.fixtures ? 'feed' : 'guide';
@@ -124,15 +161,16 @@ export function useSportsToday(): SportsToday {
     if (feed.fixtures) {
       fixtures = feed.fixtures;
     } else {
-      // Guide-only: one fixture per distinct match found in programme titles.
+      // Guide-only: one fixture per distinct match found in programme titles or event channel names.
+      const hint = competitionHint(settings.sportsLeagues);
       const byKey = new Map<string, Fixture>();
-      for (const { p } of programmes) {
-        const f = detectGuideFixture(p, settings.sportsLeagues);
-        if (!f) continue;
+      const add = (f: Fixture | null) => {
+        if (!f) return;
         const k = fixtureKey(f);
         const prev = byKey.get(k);
         if (!prev || f.start < prev.start) byKey.set(k, f);
-      }
+      };
+      for (const ip of guide.list) if (hint.test(ip.p.title)) add(detectGuideFixture(ip.p, settings.sportsLeagues));
       const { from, to } = todayWindow();
       fixtures = [...byKey.values()].filter((f) => f.start >= from && f.start < to);
     }
@@ -140,43 +178,61 @@ export function useSportsToday(): SportsToday {
     const matches: SportsMatch[] = fixtures.map((f) => {
       const pf = prepareFixture(f);
       const best = new Map<string, MatchChannel>();
-      for (const ip of programmes) {
-        const score = scorePrepared(ip.text, ip.p.start, ip.p.end, pf, ip.title);
-        if (!score) continue;
-        const prev = best.get(ip.channel.id);
-        if (!prev || score > prev.score) best.set(ip.channel.id, { channel: ip.channel, score, programme: ip.p, via: 'guide' });
+      const offer = (m: MatchChannel) => {
+        const prev = best.get(m.channel.id);
+        if (!prev || m.score > prev.score) best.set(m.channel.id, m);
+      };
+      // 1. TV guide: only entries overlapping the match window are normalised and scored.
+      const lo = f.start - 15 * 60_000;
+      const hi = f.start + 115 * 60_000;
+      for (const ip of guide.list) {
+        if (ip.p.end <= lo || ip.p.start >= hi) continue;
+        const score = scorePrepared(textOf(ip), ip.p.start, ip.p.end, pf, titleOf(ip));
+        if (score) offer({ channel: ip.channel, score, programme: ip.p, via: 'guide' });
       }
-      // Channels named after a listed broadcaster ("TNT Sports 1") are weaker hints.
-      if (f.broadcasts.length && catalog) {
+      // 2. Event / PPV channels named after the match.
+      for (const { ch, name } of channels) if (channelNameScore(name, pf)) offer({ channel: ch, score: 1, via: 'channel' });
+      // 3. Channels named after a listed broadcaster ("TNT Sports 1") are weaker hints.
+      if (f.broadcasts.length) {
         let added = 0;
-        for (const ch of catalog.channels) {
+        for (const { ch } of channels) {
           if (added >= 6 || best.has(ch.id)) continue;
-          const score = broadcasterScore(ch.name, f);
-          if (score) {
-            best.set(ch.id, { channel: ch, score, via: 'broadcaster' });
+          if (broadcasterScore(ch.name, f)) {
+            offer({ channel: ch, score: 0.35, via: 'broadcaster' });
             added++;
           }
         }
       }
-      const channels = [...best.values()].sort((a, b) => b.score - a.score || a.channel.num - b.channel.num);
-      return { fixture: f, state: stateAt(f, now), channels };
+      const list = [...best.values()].sort((a, b) => b.score - a.score || a.channel.num - b.channel.num);
+      return { fixture: f, state: stateAt(f, now), channels: list };
     });
 
     const order = { in: 0, pre: 1, post: 2 } as const;
     matches.sort((a, b) => order[a.state] - order[b.state] || a.fixture.start - b.fixture.start);
 
     const seen = new Set<string>();
-    const channels: Channel[] = [];
+    const zap: Channel[] = [];
     for (const m of matches) {
       if (m.state === 'post') continue;
       for (const c of m.channels) {
         if (seen.has(c.channel.id)) continue;
         seen.add(c.channel.id);
-        channels.push(c.channel);
+        zap.push(c.channel);
       }
     }
-    return { matches, channels, source };
-  }, [feed.fixtures, programmes, settings.sportsLeagues, catalog, now]);
+    return { matches, channels: zap, source };
+  }, [feed.fixtures, guide, channels, settings.sportsLeagues, now]);
 
-  return { ...result, loading: feed.loading, feedError: online ? feed.error : null };
+  return {
+    ...result,
+    loading: feed.loading,
+    feedError: online ? feed.error : null,
+    diagnostics: {
+      feed: !online ? 'off' : feed.fixtures ? 'ok' : 'error',
+      feedFixtures: feed.fixtures?.length ?? 0,
+      programmesToday: guide.list.length,
+      channelsWithGuide: guide.withGuide,
+      channels: channels.length,
+    },
+  };
 }

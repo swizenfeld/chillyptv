@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { broadcasterScore, detectGuideFixture, fixtureKey, parseEspnScoreboard, programmeScore, teamNames, type Fixture } from '../../shared/sports';
+import { broadcasterScore, channelNameScore, competitionHint, detectGuideFixture, fixtureKey, normalize, parseEspnScoreboard, prepareFixture, programmeScore, teamNames, type Fixture } from '../../shared/sports';
 
 const KO = Date.UTC(2026, 9, 31, 12, 30);
 const fx = (home: string, away: string, leagueId = 'eng.1', patch: Partial<Fixture> = {}): Fixture => ({
@@ -45,6 +45,31 @@ describe('broadcaster channels', () => {
     const f = fx('Vélez Sarsfield', 'San Lorenzo', 'arg.1', { broadcasts: ['TNT Sports'] });
     expect(broadcasterScore('AR: TNT Sports HD', f)).toBe(0.35);
     expect(broadcasterScore('TNT Comedy', f)).toBe(0);
+  });
+});
+
+describe('event / PPV channel names', () => {
+  const f = prepareFixture(fx('Boca Juniors', 'River Plate', 'arg.1'));
+  it('finds the match in the channel name, with nicknames', () => {
+    expect(channelNameScore(normalize('LAT| ARG FANATIZ PPV 3: Boca vs River 20:00'), f)).toBe(1);
+    expect(channelNameScore(normalize('AR | ESPN PPV - Boca Juniors x River Plate'), f)).toBe(1);
+  });
+  it('needs both teams', () => {
+    expect(channelNameScore(normalize('Boca TV'), f)).toBe(0);
+    expect(channelNameScore(normalize('LAT| ARG FANATIZ PPV 3'), f)).toBe(0);
+  });
+});
+
+describe('competition pre-filter', () => {
+  const re = competitionHint(['arg.1', 'eng.1', 'esp.1']);
+  it('tolerates accents, case and separators', () => {
+    expect(re.test('Fútbol Argentino: Boca vs River')).toBe(true);
+    expect(re.test('LIGA ESPAÑOLA: Betis - Málaga')).toBe(true);
+    expect(re.test('Premier-League: Chelsea v Spurs')).toBe(true);
+    expect(re.test('Torneo Clausura - Racing vs Independiente')).toBe(true);
+  });
+  it('skips unrelated titles', () => {
+    expect(re.test('Noticias 24 horas')).toBe(false);
   });
 });
 
