@@ -115,7 +115,7 @@ await step('add Xtream playlist', async () => {
 });
 
 await step('home dashboard', async () => {
-  await page.locator('.home-tile.tile-live').waitFor();
+  await page.locator('.hero').waitFor();
   await page.screenshot({ path: join(OUT, '01-home.png') });
 });
 
@@ -343,7 +343,7 @@ await step('M3U file playlist', async () => {
 await step('mobile layout', async () => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto(`${APP}/`);
-  await page.locator('.home-tile').first().waitFor();
+  await page.locator('.hero').waitFor();
   await page.screenshot({ path: join(OUT, '15-mobile-home.png') });
   await page.goto(`${APP}/live`);
   await page.locator('.channel-row').first().waitFor();

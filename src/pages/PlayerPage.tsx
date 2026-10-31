@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Navigate, useNavigate } from 'react-router-dom';
-import { X } from 'lucide-react';
+import { Search, X } from 'lucide-react';
 import { usePlayer } from '../store/player';
 import { useCatalog } from '../store/catalog';
 import { useActiveProfile } from '../store/profiles';
@@ -11,6 +11,7 @@ import { VideoPlayer } from '../player/VideoPlayer';
 import { Img } from '../components/ui';
 import { quickFilter } from '../lib/search';
 import { toast } from '../store/toast';
+import { formatMinutes } from '../lib/format';
 import type { Channel } from '../lib/types';
 
 export function PlayerPage() {
@@ -104,10 +105,21 @@ export function PlayerPage() {
 function ChannelOverlay({ ids, current, onPick, onClose }: { ids: string[]; current: string; onPick: (c: Channel) => void; onClose: () => void }) {
   const index = useCatalog((s) => s.index);
   const [q, setQ] = useState('');
+  const [cat, setCat] = useState<string>('__all');
   const ref = useRef<HTMLDivElement>(null);
-  const channels = useMemo(() => quickFilter(ids.map((id) => index?.channelById.get(id)).filter(Boolean) as Channel[], q, (c) => `${c.num} ${c.name}`), [ids, index, q]);
+  const now = Date.now();
+  const all = useMemo(() => ids.map((id) => index?.channelById.get(id)).filter(Boolean) as Channel[], [ids, index]);
+  // Category chips for the categories present in this channel list, in list order.
+  const cats = useMemo(() => {
+    const seen = new Map<string, string>();
+    for (const c of all) if (!seen.has(c.categoryId)) seen.set(c.categoryId, index?.categoryById.get(c.categoryId)?.name ?? '');
+    return [...seen.entries()].filter(([, name]) => name).slice(0, 16);
+  }, [all, index]);
+  const channels = useMemo(() => quickFilter(cat === '__all' ? all : all.filter((c) => c.categoryId === cat), q, (c) => `${c.num} ${c.name}`), [all, cat, q]);
   useEffect(() => {
-    ref.current?.querySelector('.active')?.scrollIntoView({ block: 'center' });
+    const list = ref.current;
+    const active = list?.querySelector<HTMLElement>('.active');
+    if (list && active) list.scrollTop = active.offsetTop - list.clientHeight / 3;
   }, []);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -120,27 +132,44 @@ function ChannelOverlay({ ids, current, onPick, onClose }: { ids: string[]; curr
     return () => window.removeEventListener('keydown', onKey, true);
   }, [onClose]);
   return (
-    <div className="channel-overlay" onClick={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()}>
-      <div className="row gap">
-        <input className="input" autoFocus value={q} onChange={(e) => setQ(e.target.value)} placeholder="Find channel" aria-label="Find channel" />
+    <div className="channel-overlay" onClick={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()} role="dialog" aria-label="Channels">
+      <div className="overlay-head">
+        <div className="search-box small">
+          <Search size={16} aria-hidden />
+          <input autoFocus value={q} onChange={(e) => setQ(e.target.value)} placeholder="Find channel or number" aria-label="Find channel" />
+        </div>
         <button className="icon-btn" onClick={onClose} aria-label="Close channel list">
           <X size={18} />
         </button>
       </div>
+      {cats.length > 1 && (
+        <div className="overlay-cats" role="tablist" aria-label="Categories">
+          {[['__all', 'All'] as [string, string], ...cats].map(([id, name]) => (
+            <button key={id} role="tab" aria-selected={cat === id} className={cat === id ? 'active' : ''} onClick={() => setCat(id)}>
+              {name}
+            </button>
+          ))}
+        </div>
+      )}
       <div className="overlay-scroll" ref={ref}>
         {channels.slice(0, 500).map((c) => {
-          const nn = nowNext(programmesFor(c));
+          const p = nowNext(programmesFor(c), now).now;
+          const watching = c.id === current;
           return (
-            <button key={c.id} className={`overlay-ch ${c.id === current ? 'active' : ''}`} onClick={() => onPick(c)}>
-              <span className="ch-num">{c.num}</span>
-              <Img src={c.logo} alt={c.name} className="ch-logo small" />
+            <button key={c.id} className={`overlay-ch ${watching ? 'active' : ''}`} onClick={() => onPick(c)} aria-current={watching}>
+              <Img src={c.logo} alt="" className="overlay-logo" />
               <span className="grow">
-                <span className="ch-name">{c.name}</span>
-                {nn.now && <span className="ch-now-title">{nn.now.title}</span>}
+                {watching && <span className="watching-pill">Watching</span>}
+                <span className="overlay-title">{p?.title ?? c.name}</span>
+                <span className="overlay-meta">
+                  <span className="tabular">{c.num}</span> {c.name}
+                  {p ? ` · ${formatMinutes(Math.max(0, p.end - now) / 1000)} left` : ''}
+                </span>
               </span>
             </button>
           );
         })}
+        {!channels.length && <p className="overlay-empty">No channels match.</p>}
       </div>
     </div>
   );
