@@ -29,6 +29,10 @@ export interface VideoPlayerProps {
   onToggleChannelList?: () => void;
   sidePanel?: ReactNode;
   tileActions?: ReactNode;
+  /** Extra buttons in the top bar (full player). */
+  topActions?: ReactNode;
+  /** Playback has failed for good (after the engine's own retries and fallbacks). */
+  onFatal?: (message: string) => void;
 }
 
 const ENGINE_LABEL: Record<EngineKind, string> = { hls: 'HLS (hls.js)', mpegts: 'MPEG-TS (mpegts.js)', native: 'Native', remux: 'Server remux (ffmpeg)' };
@@ -104,6 +108,7 @@ export function VideoPlayer(props: VideoPlayerProps) {
         },
         onTracks: () => setTracksVersion((v) => v + 1),
         onEngine: (k) => setEngineKind(k),
+        quickFailover: s.autoFailover && (session.alternates?.all.length ?? 0) > 1,
       },
       session.seekUrl,
     );
@@ -169,6 +174,13 @@ export function VideoPlayer(props: VideoPlayerProps) {
       save();
     };
   }, [profile, session, variant, recordProgress]);
+
+  // permanent failure → let the page switch to another feed
+  const onFatalRef = useRef(props.onFatal);
+  onFatalRef.current = props.onFatal;
+  useEffect(() => {
+    if (status === 'error') onFatalRef.current?.(detail ?? 'Playback failed');
+  }, [status]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // autoplay next episode
   useEffect(() => {
@@ -535,6 +547,7 @@ export function VideoPlayer(props: VideoPlayerProps) {
                 <Moon size={14} /> {Math.ceil((sleepAt - Date.now()) / 60000)} min
               </span>
             )}
+            {full && props.topActions}
             {full && live && backendHealth()?.recordings && (
               <button className="btn small danger-ghost" onClick={startRecording} disabled={recording} title="Record (server)">
                 <Circle size={14} fill="currentColor" /> Rec

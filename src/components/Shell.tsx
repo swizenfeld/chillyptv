@@ -7,6 +7,7 @@ import { useSettings } from '../store/settings';
 import { formatClock } from '../lib/format';
 import { useNow } from './ui';
 import { backendHealth } from '../lib/api';
+import { SportsProvider } from '../store/SportsProvider';
 
 const NAV = [
   { to: '/', icon: Home, label: 'Home', end: true },
@@ -80,7 +81,9 @@ export function Shell() {
           <time className="clock">{formatClock(now, clock24)}</time>
         </header>
         <main className="content">
-          <Outlet />
+          <SportsProvider>
+            <Outlet />
+          </SportsProvider>
         </main>
       </div>
     </div>

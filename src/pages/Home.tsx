@@ -6,6 +6,8 @@ import { useActiveProfile } from '../store/profiles';
 import { useFavorites, useHistory, useIsFavorite, useLibrary } from '../store/library';
 import { nowNext, programmesFor, useChannelProgrammes } from '../store/epg';
 import { useSettings } from '../store/settings';
+import { useSports } from '../store/SportsProvider';
+import { MatchCard } from '../components/SportsToday';
 import { liveSession, usePlay } from '../hooks/usePlay';
 import { useParental } from '../components/Parental';
 import { LiveCard, PosterCard, Row, RowLink, WideCard, channelHue } from '../components/Cards';
@@ -26,6 +28,7 @@ export function HomePage() {
   const play = usePlay();
   const { locked } = useParental();
   const now = useNow(30000);
+  const following = useSettings((s) => s.followedTeams.length > 0);
 
   const allowed = useMemo(() => {
     return (catId: string) => !locked(catId, index?.categoryById.get(catId)?.name ?? '');
@@ -114,6 +117,8 @@ export function HomePage() {
           </button>
         ))}
       </nav>
+
+      {following && <YourTeamsRow />}
 
       {continueWatching.length > 0 && (
         <Row title="Continue watching">
@@ -248,5 +253,23 @@ function LiveHero({ profile, channel, now, onWatch }: { profile: Profile; channe
         )}
       </div>
     </section>
+  );
+}
+
+/** Followed teams' matches today, live first. Mounted only when the viewer follows a team. */
+function YourTeamsRow() {
+  const sports = useSports();
+  const play = usePlay();
+  const navigate = useNavigate();
+  const matches = sports.matches.filter((m) => m.followed && m.state !== 'post');
+  if (!matches.length) return null;
+  return (
+    <Row title="Your teams today" action={<RowLink to="/live?cat=__sports" />}>
+      {matches.map((m) => (
+        <div key={m.fixture.id} className="team-row-card">
+          <MatchCard m={m} compact onSelect={(ch) => play.playMatch(m, ch)} onOpen={(mm, ch) => (mm.channels.length ? play.playMatch(mm, ch) : navigate('/live?cat=__sports'))} />
+        </div>
+      ))}
+    </Row>
   );
 }

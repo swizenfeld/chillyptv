@@ -190,6 +190,27 @@ await step('sports today: fixtures matched to channels', async () => {
   await playing('.player-preview video');
 });
 
+await step('backup feed takes over when a match stream dies', async () => {
+  await page.goto(`${APP}/live?cat=__sports`);
+  const card = page.locator('.match-card.state-in', { hasText: 'Chelsea' });
+  await card.locator('.match-more').waitFor({ timeout: 30000 }); // guide loaded: all feeds known
+  await card.locator('.match-ch').first().dblclick();
+  await page.waitForURL(/\/play/);
+  await playing('.player-full video');
+  const first = (await page.locator('.player-title .t1').textContent()).trim();
+  const streams = await (await fetch(`${MOCK}/player_api.php?username=demo&password=demo&action=get_live_streams`)).json();
+  const id = streams.find((s) => s.name === first).stream_id;
+  await fetch(`${MOCK}/__mock/kill?id=${id}`);
+  try {
+    await page.waitForFunction((t) => (document.querySelector('.player-title .t1')?.textContent ?? '').trim() !== t, first, { timeout: 60000 });
+    await playing('.player-full video');
+    await page.locator('.toast', { hasText: 'Switched to' }).waitFor();
+  } finally {
+    await fetch(`${MOCK}/__mock/kill?id=${id}&on=0`);
+  }
+  await page.keyboard.press('Escape');
+});
+
 await step('MPEG-TS live via mpegts.js', async () => {
   await page.evaluate(async () => {
     const raw = JSON.parse(localStorage.getItem('chilly.profiles'));

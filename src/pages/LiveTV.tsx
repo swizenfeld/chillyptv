@@ -10,7 +10,7 @@ import { useSettings, isCategoryLocked, isUnlocked } from '../store/settings';
 import { liveSession, usePlay } from '../hooks/usePlay';
 import { CategoryList } from '../components/CategoryList';
 import { SportsToday } from '../components/SportsToday';
-import { useSportsToday } from '../store/sports';
+import { useSports } from '../store/SportsProvider';
 import { Empty, Img, ProgressBar, Spinner, useNow } from '../components/ui';
 import { VideoPlayer } from '../player/VideoPlayer';
 import { quickFilter } from '../lib/search';
@@ -59,7 +59,7 @@ export function LiveTVPage() {
   const [filter, setFilter] = useState('');
   const isSports = cat === '__sports';
   const listChannels = useVisibleChannels(cat, filter);
-  const sports = useSportsToday();
+  const sports = useSports();
   // In "Sports today" the zap/preview order is the channels carrying today's matches.
   const channels = isSports ? sports.channels : listChannels;
   const favs = useFavorites(profile?.id, 'live');
@@ -94,7 +94,12 @@ export function LiveTVPage() {
   if (!catalog || !index || !profile) return null;
 
   const zapIds = channels.map((c) => c.id);
-  const openFull = (ch: Channel) => play.playChannel(ch, zapIds);
+  const openFull = (ch: Channel) => {
+    // A channel showing one of today's matches plays with the match's other feeds as backups.
+    const m = isSports ? sports.matches.find((x) => x.channels.some((c) => c.channel.id === ch.id)) : undefined;
+    if (m) play.playMatch(m, ch);
+    else play.playChannel(ch, zapIds);
+  };
 
   const onListKey = (e: React.KeyboardEvent) => {
     if (!channels.length) return;
@@ -146,8 +151,8 @@ export function LiveTVPage() {
             data={sports}
             filter={filter}
             selectedId={selected?.id}
-            onSelect={(ch) => (narrow || !settings.livePreview ? openFull(ch) : setSelectedId(ch.id))}
-            onOpen={openFull}
+            onSelect={(ch, m) => (narrow || !settings.livePreview ? play.playMatch(m, ch) : setSelectedId(ch.id))}
+            onOpen={(m, ch) => play.playMatch(m, ch)}
           />
         ) : channels.length === 0 ? (
           <Empty icon={cat === '__fav' ? <Star size={36} /> : <List size={36} />} title={cat === '__fav' ? 'No favourite channels yet' : filter ? `No channels match “${filter}”` : 'No channels here'}>

@@ -14,6 +14,8 @@ export interface PlaySession {
   history?: Omit<HistoryItem, 'position' | 'duration' | 'updatedAt'>;
   /** Where the close button goes. */
   returnTo?: string;
+  /** Every channel showing the same match, best first (automatic backup feeds), and which were tried. */
+  alternates?: { all: string[]; label: string; tried: string[] };
 }
 
 interface PlayerState {

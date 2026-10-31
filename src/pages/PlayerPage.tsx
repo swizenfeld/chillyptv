@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Navigate, useNavigate } from 'react-router-dom';
-import { Search, X } from 'lucide-react';
+import { Layers, Search, X } from 'lucide-react';
 import { usePlayer } from '../store/player';
 import { useCatalog } from '../store/catalog';
 import { useActiveProfile } from '../store/profiles';
@@ -12,6 +12,9 @@ import { Img } from '../components/ui';
 import { quickFilter } from '../lib/search';
 import { toast } from '../store/toast';
 import { formatMinutes } from '../lib/format';
+import { channelTags } from '../lib/channelTags';
+import { QUALITY_LABEL } from '../../shared/channels';
+import { useSettings } from '../store/settings';
 import type { Channel } from '../lib/types';
 
 export function PlayerPage() {
@@ -21,7 +24,8 @@ export function PlayerPage() {
   const index = useCatalog((s) => s.index);
   const catalog = useCatalog((s) => s.catalog);
   const navigate = useNavigate();
-  const [listOpen, setListOpen] = useState(false);
+  const [listOpen, setListOpen] = useState<false | 'channels' | 'feeds'>(false);
+  const autoFailover = useSettings((s) => s.autoFailover);
 
   const channel = session?.req.channelId ? index?.channelById.get(session.req.channelId) : undefined;
   const zapList = useMemo(() => session?.zapList ?? catalog?.channels.map((c) => c.id) ?? [], [session?.zapList, catalog]);
@@ -43,7 +47,29 @@ export function PlayerPage() {
     navigate(to, { replace: true });
   };
 
-  const switchTo = (ch: Channel) => setSession({ ...liveSession(profile, ch, zapList), returnTo: session.returnTo });
+  const alt = session.alternates;
+  // Staying inside the match's feeds keeps the backup list; any other channel drops it.
+  const switchTo = (ch: Channel, auto = false) => {
+    const keep = alt && alt.all.includes(ch.id);
+    setSession({
+      ...liveSession(profile, ch, zapList),
+      alternates: keep ? { ...alt, tried: auto ? [...alt.tried, ch.id] : [ch.id] } : undefined,
+      returnTo: session.returnTo,
+    });
+  };
+
+  /** Automatic backup: the stream died for good, move to the best feed not tried yet. */
+  const onFatal = () => {
+    if (!alt || !autoFailover || !index) return;
+    const nextId = alt.all.find((id) => !alt.tried.includes(id));
+    const next = nextId ? index.channelById.get(nextId) : undefined;
+    if (!next) {
+      toast.error(`All ${alt.all.length} feeds for ${alt.label} failed`);
+      return;
+    }
+    toast.info(`${channel?.name ?? 'This feed'} stopped. Switched to ${next.name}.`);
+    switchTo(next, true);
+  };
 
   const zap = (dir: 1 | -1) => {
     if (!channel || !index || !zapList.length) return;
@@ -84,15 +110,22 @@ export function PlayerPage() {
         onZapTo={channel ? zapTo : undefined}
         onPrevChannel={channel ? prevChannel : undefined}
         onNext={next}
-        onToggleChannelList={channel ? () => setListOpen((o) => !o) : undefined}
+        onFatal={onFatal}
+        onToggleChannelList={channel ? () => setListOpen((o) => (o ? false : 'channels')) : undefined}
+        topActions={
+          alt && alt.all.length > 1 ? (
+            <button className="btn small glass" onClick={() => setListOpen((o) => (o === 'feeds' ? false : 'feeds'))} title={`Other channels showing ${alt.label}`}>
+              <Layers size={14} /> Feeds · {alt.all.length}
+            </button>
+          ) : null
+        }
         sidePanel={
           listOpen && channel ? (
             <ChannelOverlay
-              ids={zapList}
+              ids={listOpen === 'feeds' && alt ? alt.all : zapList}
+              title={listOpen === 'feeds' && alt ? alt.label : undefined}
               current={channel.id}
-              onPick={(ch) => {
-                switchTo(ch);
-              }}
+              onPick={(ch) => switchTo(ch)}
               onClose={() => setListOpen(false)}
             />
           ) : null
@@ -102,7 +135,7 @@ export function PlayerPage() {
   );
 }
 
-function ChannelOverlay({ ids, current, onPick, onClose }: { ids: string[]; current: string; onPick: (c: Channel) => void; onClose: () => void }) {
+function ChannelOverlay({ ids, current, onPick, onClose, title }: { ids: string[]; current: string; onPick: (c: Channel) => void; onClose: () => void; title?: string }) {
   const index = useCatalog((s) => s.index);
   const [q, setQ] = useState('');
   const [cat, setCat] = useState<string>('__all');
@@ -142,7 +175,8 @@ function ChannelOverlay({ ids, current, onPick, onClose }: { ids: string[]; curr
           <X size={18} />
         </button>
       </div>
-      {cats.length > 1 && (
+      {title && <p className="overlay-feeds-title">Feeds for {title}, best first</p>}
+      {!title && cats.length > 1 && (
         <div className="overlay-cats" role="tablist" aria-label="Categories">
           {[['__all', 'All'] as [string, string], ...cats].map(([id, name]) => (
             <button key={id} role="tab" aria-selected={cat === id} className={cat === id ? 'active' : ''} onClick={() => setCat(id)}>
@@ -162,6 +196,7 @@ function ChannelOverlay({ ids, current, onPick, onClose }: { ids: string[]; curr
                 {watching && <span className="watching-pill">Watching</span>}
                 <span className="overlay-title">{p?.title ?? c.name}</span>
                 <span className="overlay-meta">
+                  {title && <FeedBadges ch={c} />}
                   <span className="tabular">{c.num}</span> {c.name}
                   {p ? ` · ${formatMinutes(Math.max(0, p.end - now) / 1000)} left` : ''}
                 </span>
@@ -172,5 +207,18 @@ function ChannelOverlay({ ids, current, onPick, onClose }: { ids: string[]; curr
         {!channels.length && <p className="overlay-empty">No channels match.</p>}
       </div>
     </div>
+  );
+}
+
+/** Quality / language / variant badges for a feed. */
+export function FeedBadges({ ch }: { ch: Channel }) {
+  const t = channelTags(ch);
+  const q = QUALITY_LABEL[t.quality];
+  return (
+    <>
+      {q && <span className="feed-badge">{q}</span>}
+      {t.lang && <span className="feed-badge">{t.lang.toUpperCase()}</span>}
+      {t.variant && <span className="feed-badge">{t.variant}</span>}
+    </>
   );
 }

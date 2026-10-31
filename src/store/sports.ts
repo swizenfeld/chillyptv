@@ -5,8 +5,10 @@ import { useCatalog } from './catalog';
 import { programmesFor, useEpg } from './epg';
 import { isCategoryLocked, isUnlocked, useSettings } from './settings';
 import {
-  broadcasterScore, channelNameScore, competitionHint, detectGuideFixture, fixtureKey, prepareFixture, scorePrepared, stateAt, type Fixture,
+  broadcasterScore, channelNameScore, competitionHint, detectGuideFixture, fixtureKey, followKeys, isFollowed, prepareFixture, scorePrepared, stateAt, type Fixture,
 } from '../../shared/sports';
+import { compareRank, feedRank, type ChannelTags } from '../../shared/channels';
+import { channelTags } from '../lib/channelTags';
 import type { Channel, Programme } from '../lib/types';
 
 const API = `${import.meta.env.BASE_URL}api`;
@@ -17,12 +19,16 @@ export interface MatchChannel {
   score: number;
   programme?: Programme;
   via: 'guide' | 'channel' | 'broadcaster';
+  tags: ChannelTags;
 }
 
 export interface SportsMatch {
   fixture: Fixture;
   state: Fixture['state'];
+  /** Best feed first: confidence, then preferred language, then quality. */
   channels: MatchChannel[];
+  /** One of the teams is followed. */
+  followed: boolean;
 }
 
 export interface SportsDiagnostics {
@@ -117,11 +123,13 @@ const titleOf = (ip: IndexedProgramme) => (ip.title ??= normalize(ip.p.title));
  * are detected from programme titles. Channels are found through the TV guide,
  * event/PPV channel names, and channels named after a listed broadcaster.
  */
-export function useSportsToday(): SportsToday {
+export function useSportsToday(active = true): SportsToday {
   const settings = useSettings();
-  const { catalog, index } = useCatalog();
+  const catalogState = useCatalog();
+  const catalog = active ? catalogState.catalog : null;
+  const index = active ? catalogState.index : null;
   const epgVersion = useEpg((s) => s.version);
-  const online = settings.sportsOnline && !!backendHealth()?.ok;
+  const online = active && settings.sportsOnline && !!backendHealth()?.ok;
   const feed = useFixtureFeed(settings.sportsLeagues, online);
   const [now, setNow] = useState(Date.now());
   useEffect(() => {
@@ -175,6 +183,9 @@ export function useSportsToday(): SportsToday {
       fixtures = [...byKey.values()].filter((f) => f.start >= from && f.start < to);
     }
 
+    const prefs = { languages: settings.feedLanguages, maxQuality: settings.feedMaxQuality };
+    const followed = settings.followedTeams.map((t) => followKeys(t.name));
+    const tier = (score: number) => (score >= 1 ? 0 : score >= 0.6 ? 1 : 2);
     const matches: SportsMatch[] = fixtures.map((f) => {
       const pf = prepareFixture(f);
       const best = new Map<string, MatchChannel>();
@@ -188,23 +199,24 @@ export function useSportsToday(): SportsToday {
       for (const ip of guide.list) {
         if (ip.p.end <= lo || ip.p.start >= hi) continue;
         const score = scorePrepared(textOf(ip), ip.p.start, ip.p.end, pf, titleOf(ip));
-        if (score) offer({ channel: ip.channel, score, programme: ip.p, via: 'guide' });
+        if (score) offer({ channel: ip.channel, score, programme: ip.p, via: 'guide', tags: channelTags(ip.channel) });
       }
       // 2. Event / PPV channels named after the match.
-      for (const { ch, name } of channels) if (channelNameScore(name, pf)) offer({ channel: ch, score: 1, via: 'channel' });
+      for (const { ch, name } of channels) if (channelNameScore(name, pf)) offer({ channel: ch, score: 1, via: 'channel', tags: channelTags(ch) });
       // 3. Channels named after a listed broadcaster ("TNT Sports 1") are weaker hints.
       if (f.broadcasts.length) {
         let added = 0;
         for (const { ch } of channels) {
           if (added >= 6 || best.has(ch.id)) continue;
           if (broadcasterScore(ch.name, f)) {
-            offer({ channel: ch, score: 0.35, via: 'broadcaster' });
+            offer({ channel: ch, score: 0.35, via: 'broadcaster', tags: channelTags(ch) });
             added++;
           }
         }
       }
-      const list = [...best.values()].sort((a, b) => b.score - a.score || a.channel.num - b.channel.num);
-      return { fixture: f, state: stateAt(f, now), channels: list };
+      const ranked = [...best.values()].map((c) => ({ c, t: tier(c.score), r: feedRank(c.tags, prefs) }));
+      ranked.sort((a, b) => a.t - b.t || compareRank(a.r, b.r) || a.c.channel.num - b.c.channel.num);
+      return { fixture: f, state: stateAt(f, now), channels: ranked.map((x) => x.c), followed: isFollowed(f.home, followed) || isFollowed(f.away, followed) };
     });
 
     const order = { in: 0, pre: 1, post: 2 } as const;
@@ -221,7 +233,7 @@ export function useSportsToday(): SportsToday {
       }
     }
     return { matches, channels: zap, source };
-  }, [feed.fixtures, guide, channels, settings.sportsLeagues, now]);
+  }, [feed.fixtures, guide, channels, settings.sportsLeagues, settings.feedLanguages, settings.feedMaxQuality, settings.followedTeams, now]);
 
   return {
     ...result,

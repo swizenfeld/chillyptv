@@ -4,6 +4,8 @@
  * Pure functions — shared by the server, the browser and the unit tests.
  */
 
+import { parseChannelTags } from './channels.js';
+
 export type Region = 'Europe' | 'International' | 'South America' | 'North America';
 
 /** Display order of groups; each group belongs to one region. */
@@ -277,12 +279,17 @@ export function competitionHint(leagueIds: string[]): RegExp {
   return new RegExp(words.length ? words.join('|') : '(?!)', 'i');
 }
 
-/** Channel names that look like one of the fixture's broadcasters ("TNT Sports 1 HD" ~ "TNT Sports"). */
+/**
+ * Channel looks like one of the fixture's TV broadcasters: the cleaned channel name
+ * ("tnt sports" from "AR: TNT Sports HD") starts with the broadcaster name.
+ * Streaming apps ("ESPN+", "Paramount+", "Apple TV") are not channels and are skipped.
+ */
 export function broadcasterScore(channelName: string, f: Fixture): number {
-  const ch = normalize(channelName.replace(/^[a-z]{2,3}\s*[:|]\s*/i, ''));
+  const base = parseChannelTags(channelName).base;
   for (const b of f.broadcasts) {
+    if (/\+|\bapp\b|apple tv|peacock|max\b|disney/i.test(b)) continue;
     const n = normalize(b);
-    if (n.length >= 3 && mentions(ch, n)) return 0.35;
+    if (n.length >= 3 && (base === n || base.startsWith(`${n} `))) return 0.35;
   }
   return 0;
 }
@@ -389,4 +396,16 @@ export function parseEspnScoreboard(json: any, leagueId: string): Fixture[] {
       },
     ];
   });
+}
+
+/** Names that identify a followed team; compare with `isFollowed`. */
+export function followKeys(name: string): Set<string> {
+  return new Set(teamNames({ name }).filter((n) => n.length >= 4));
+}
+
+/** True when the fixture team is one of the followed teams (by name, nickname or distinctive word). */
+export function isFollowed(team: Team, followed: Set<string>[]): boolean {
+  if (!followed.length) return false;
+  const names = teamNames(team).filter((n) => n.length >= 4);
+  return followed.some((keys) => names.some((n) => keys.has(n)));
 }

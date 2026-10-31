@@ -167,3 +167,17 @@ describe('expanded competitions', () => {
     }
   });
 });
+
+describe('broadcaster channels (strict)', () => {
+  const f = (b: string[]) => fx('Barcelona', 'Alavés', 'esp.1', { broadcasts: b });
+  it('streaming apps are not channels', () => {
+    expect(broadcasterScore('LAT| ESPN 2 FHD', f(['ESPN+']))).toBe(0);
+    expect(broadcasterScore('Paramount Network HD', f(['Paramount+']))).toBe(0);
+  });
+  it('the channel must start with the broadcaster name', () => {
+    expect(broadcasterScore('UK: Sky Sports Main Event 4K', f(['Sky Sports']))).toBe(0.35);
+    expect(broadcasterScore('AR: TNT Sports HD', f(['TNT Sports']))).toBe(0.35);
+    expect(broadcasterScore('LAT| ESPN 2 FHD', f(['ESPN']))).toBe(0.35);
+    expect(broadcasterScore('Fox News HD', f(['FOX Sports']))).toBe(0);
+  });
+});

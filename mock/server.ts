@@ -122,12 +122,17 @@ interface MockFixture { id: number; league: string; home: string; away: string; 
 const SPORTS_ANCHOR = Math.floor(Date.now() / (30 * 60_000)) * 30 * 60_000;
 const sportsChannels = live.filter((c) => c.cat === 2);
 sportsChannels[5].name = 'AR: TNT Sports HD';
+// Several feeds of one match, as big providers list them (language prefix, quality, raw feed).
+sportsChannels[0].name = 'UK: Fox Sports 1 HD';
+sportsChannels[2].name = 'LAT| ESPN 2 FHD';
+sportsChannels[12].name = 'LAT| ESPN 2 SD';
+sportsChannels[13].name = 'LAT| ESPN 2 FHD ᴿᴬᵂ';
 sportsChannels[8].name = 'UK: Sky Sports Main Event';
 // Latin-American style event channel: the match is in the channel name, not the guide.
 sportsChannels[9].name = 'LAT| ARG FANATIZ PPV 3: Boca vs River 20:00';
 sportsChannels[11].name = 'LAT| CONMEBOL PPV 1: Racing vs Cruzeiro';
 const FIXTURES: MockFixture[] = [
-  { id: 701, league: 'eng.1', home: 'Chelsea', away: 'Manchester United', offsetMin: -40, broadcasts: ['TNT Sports'], guide: [{ ch: 0, title: 'Premier League: Chelsea v Man Utd' }, { ch: 2, title: 'Live: Chelsea vs Manchester United' }] },
+  { id: 701, league: 'eng.1', home: 'Chelsea', away: 'Manchester United', offsetMin: -40, broadcasts: ['TNT Sports'], guide: [{ ch: 0, title: 'Premier League: Chelsea v Man Utd' }, { ch: 2, title: 'Live: Chelsea vs Manchester United' }, { ch: 12, title: 'Premier League: Chelsea vs Man Utd' }, { ch: 13, title: 'Premier League: Chelsea vs Man Utd' }] },
   { id: 702, league: 'eng.1', home: 'Tottenham Hotspur', away: 'Crystal Palace', offsetMin: 90, broadcasts: ['Sky Sports'], guide: [{ ch: 1, title: 'Premier League: Spurs v Palace' }] },
   { id: 703, league: 'esp.1', home: 'Barcelona', away: 'Deportivo Alavés', offsetMin: 150, broadcasts: ['ESPN+'], guide: [{ ch: 3, title: 'LALIGA EA SPORTS - FC Barcelona vs Alavés' }] },
   { id: 704, league: 'arg.1', home: 'Vélez Sarsfield', away: 'San Lorenzo', offsetMin: 60, broadcasts: ['TNT Sports'], guide: [{ ch: 4, title: 'Liga Profesional: Vélez vs San Lorenzo' }] },
@@ -139,6 +144,7 @@ const FIXTURES: MockFixture[] = [
   { id: 710, league: 'ita.1', home: 'Internazionale', away: 'AC Milan', offsetMin: 120, broadcasts: ['Paramount+'], guide: [{ ch: 10, title: 'Serie A: Inter vs Milan' }] },
   { id: 711, league: 'conmebol.sudamericana', home: 'Racing Club', away: 'Cruzeiro', offsetMin: 270, broadcasts: ['ESPN'] },
 ];
+const killed = new Set<string>();
 const fixtureStart = (f: MockFixture) => SPORTS_ANCHOR + f.offsetMin * 60_000;
 
 const movies = Array.from({ length: 60 }, (_, i) => ({
@@ -405,17 +411,26 @@ const server = createServer((req, res) => {
     const name = movies.find((x) => x.id === id)?.name ?? series.find((x) => x.id === id)?.name ?? 'Show';
     return m[1] === 'poster' ? svg(res, name, (id * 29) % 360, 300, 450) : svg(res, name, (id * 29) % 360, 1280, 720);
   }
+  // Test hook: /__mock/kill?id=12 makes channel 12 fail (playlist and stream), &on=0 revives it.
+  if (p === '/__mock/kill') {
+    const id = url.searchParams.get('id') ?? '';
+    if (url.searchParams.get('on') === '0') killed.delete(id);
+    else killed.add(id);
+    return json(res, { killed: [...killed] });
+  }
   m = p.match(/^\/live\/([^/]+)\/([^/]+)\/(\d+)\.(m3u8|ts)$/);
   if (m) {
     if (m[1] !== USER || m[2] !== PASS) return res.writeHead(403).end();
     const ch = live.find((c) => String(c.id) === m![3]);
     if (!ch) return res.writeHead(404).end();
+    if (killed.has(String(ch.id))) return res.writeHead(503).end();
     if (m[4] === 'ts') return liveStreamTs(res, ch.src, { realtime: true });
     // Redirect like many real panels do, so the proxy's redirect handling is exercised.
     res.writeHead(302, { Location: `/hls/${ch.src}/index.m3u8?token=${ch.id}` });
     return res.end();
   }
   m = p.match(/^\/hls\/([abc])\/(index\.m3u8|seg_\d+\.ts)$/);
+  if (m && killed.has(url.searchParams.get('token') ?? '')) return res.writeHead(503).end();
   if (m) return serveFile(req, res, join(MEDIA, `hls-${m[1]}`, m[2]), m[2].endsWith('.m3u8') ? 'application/vnd.apple.mpegurl' : 'video/mp2t');
   m = p.match(/^\/movie\/[^/]+\/[^/]+\/(\d+)\.(\w+)$/);
   if (m) return m[2] === 'mkv' ? serveFile(req, res, join(MEDIA, 'movie-ac3.mkv'), 'video/x-matroska') : serveFile(req, res, join(MEDIA, 'movie.mp4'), 'video/mp4');

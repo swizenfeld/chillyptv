@@ -42,6 +42,20 @@ export interface Settings {
   sportsLeagues: string[];
   /** Fetch fixtures online (ESPN) instead of relying on the TV guide only. */
   sportsOnline: boolean;
+  /** Commentary languages in order of preference, for ranking feeds of the same match. */
+  feedLanguages: string[];
+  /** Best quality worth preferring when several feeds show the same match. */
+  feedMaxQuality: 'uhd' | 'fhd' | 'hd';
+  /** Switch to another feed of the same match automatically when the stream fails. */
+  autoFailover: boolean;
+  followedTeams: FollowedTeam[];
+  /** Alert this many minutes before a followed team kicks off (0 = off). */
+  teamAlertMinutes: number;
+}
+
+export interface FollowedTeam {
+  name: string;
+  logo?: string;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -76,7 +90,17 @@ export const DEFAULT_SETTINGS: Settings = {
   movieSort: 'added',
   sportsLeagues: DEFAULT_LEAGUES,
   sportsOnline: true,
+  feedLanguages: defaultLanguages(),
+  feedMaxQuality: 'uhd',
+  autoFailover: true,
+  followedTeams: [],
+  teamAlertMinutes: 10,
 };
+
+function defaultLanguages(): string[] {
+  const nav = typeof navigator !== 'undefined' ? navigator.language?.slice(0, 2).toLowerCase() : '';
+  return nav && nav !== 'en' ? [nav, 'en'] : ['en', 'es'];
+}
 
 interface SettingsState extends Settings {
   set: (patch: Partial<Settings>) => void;

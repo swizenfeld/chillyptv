@@ -37,6 +37,11 @@ export interface EngineOptions {
   onStatus: (s: EngineStatus, detail?: string) => void;
   onTracks: () => void;
   onEngine: (k: EngineKind) => void;
+  /**
+   * Another feed of the same content is available: give up on a dead live stream
+   * quickly (one retry, no remux, no final reconnect cycle) so the caller can switch.
+   */
+  quickFailover?: boolean;
 }
 
 interface Candidate {
@@ -109,6 +114,9 @@ export class PlaybackEngine {
   private mpegtsLib: typeof Mpegts | null = null;
   private lastProgressAt = Date.now();
   private lastTime = 0;
+  /** A frame has played since the current candidate was loaded. */
+  private started = false;
+  private startTimer: number | undefined;
   current: Candidate | null = null;
 
   constructor(
@@ -158,6 +166,8 @@ export class PlaybackEngine {
       this.cleanup.push(() => v.removeEventListener(ev, fn));
     };
     on('playing', () => {
+      this.started = true;
+      window.clearTimeout(this.startTimer);
       this.attempts = 0;
       this.opts.onStatus('playing');
     });
@@ -202,6 +212,16 @@ export class PlaybackEngine {
     this.kind = c.kind;
     this.opts.onEngine(c.kind);
     this.opts.onStatus('loading');
+    // A live stream that never delivers a frame (dead feed, 503, empty TS) must count as a failure;
+    // otherwise it would sit in "loading"/"paused" forever and no fallback or backup feed would run.
+    this.started = false;
+    window.clearTimeout(this.startTimer);
+    if (this.isLive) {
+      const deadline = this.opts.quickFailover ? 12_000 : 25_000;
+      this.startTimer = window.setTimeout(() => {
+        if (!this.started && !this.destroyed && !this.userPaused) this.fail('No video from this stream');
+      }, deadline);
+    }
     this.lastProgressAt = Date.now();
     const ua = this.req.userAgent;
     const ref = this.req.referrer;
@@ -226,7 +246,7 @@ export class PlaybackEngine {
         hls.on(HlsC.Events.MANIFEST_PARSED, () => {
           this.applyPreferredTracks();
           this.opts.onTracks();
-          void v.play().catch(() => this.opts.onStatus('paused'));
+          void v.play().catch((e: Error) => this.onPlayRejected(e));
         });
         hls.on(HlsC.Events.AUDIO_TRACKS_UPDATED, () => this.opts.onTracks());
         hls.on(HlsC.Events.SUBTITLE_TRACKS_UPDATED, () => this.opts.onTracks());
@@ -285,7 +305,7 @@ export class PlaybackEngine {
         player.attachMediaElement(v);
         player.load();
         const p = player.play();
-        if (p && typeof (p as Promise<void>).catch === 'function') (p as Promise<void>).catch(() => this.opts.onStatus('paused'));
+        if (p && typeof (p as Promise<void>).catch === 'function') (p as Promise<void>).catch((e: Error) => this.onPlayRejected(e));
         break;
       }
       case 'native': {
@@ -338,7 +358,7 @@ export class PlaybackEngine {
     const liveRetry = this.isLive && this.opts.autoReconnect && !unsupported;
     // Remember where we were so the next attempt resumes there.
     if (!this.isLive) this.offset = this.currentTime;
-    if (liveRetry && this.attempts < 3) {
+    if (liveRetry && this.attempts < (this.opts.quickFailover ? 1 : 3)) {
       this.attempts++;
       const delay = Math.min(10000, 1000 * 2 ** (this.attempts - 1));
       this.opts.onStatus('reconnecting', `${message} — retrying in ${Math.round(delay / 1000)}s`);
@@ -346,14 +366,14 @@ export class PlaybackEngine {
       this.retryTimer = window.setTimeout(() => this.load(), delay);
       return;
     }
-    if (this.index + 1 < this.candidates.length) {
+    if (this.index + 1 < this.candidates.length && !(this.opts.quickFailover && this.isLive && this.candidates[this.index + 1].kind === 'remux')) {
       this.index++;
       this.attempts = 0;
       this.opts.onStatus('reconnecting', `${message} — trying ${this.candidates[this.index].kind}`);
       this.retryTimer = window.setTimeout(() => this.load(), 300);
       return;
     }
-    if (this.isLive && this.opts.autoReconnect && this.attempts < 6) {
+    if (this.isLive && this.opts.autoReconnect && !this.opts.quickFailover && this.attempts < 6) {
       // Cycle through the candidates once more before giving up.
       this.attempts++;
       this.index = 0;
@@ -591,7 +611,19 @@ export class PlaybackEngine {
   }
 
   // ----------------------------------------------------------------- cleanup
+  /** True when the browser blocked autoplay: waiting for the viewer, not a failure. */
+  private userPaused = false;
+
+  private onPlayRejected(e: Error): void {
+    if (e?.name === 'NotAllowedError') {
+      this.userPaused = true;
+      window.clearTimeout(this.startTimer);
+      this.opts.onStatus('paused');
+    }
+  }
+
   private teardownPlayers(): void {
+    window.clearTimeout(this.startTimer);
     window.clearTimeout(this.retryTimer);
     window.clearTimeout(this.silentCheck);
     if (this.hls) {

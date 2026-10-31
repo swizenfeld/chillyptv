@@ -8,6 +8,18 @@ import { catchupRequest, episodeRequest, liveRequest, movieRequest } from '../li
 import { XtreamClient } from '../lib/xtream';
 import { buildM3uCatchupUrl } from '../lib/catchup';
 import type { Channel, Episode, Movie, Profile, Programme, SeriesItem } from '../lib/types';
+import type { SportsMatch } from '../store/sports';
+
+/** Session for one feed of a match; the other ranked feeds become automatic backups. */
+export function matchSession(profile: Profile, m: SportsMatch, channel?: Channel, tried: string[] = []): PlaySession | null {
+  const ch = channel ?? m.channels.find((c) => !tried.includes(c.channel.id))?.channel ?? m.channels[0]?.channel;
+  if (!ch) return null;
+  const all = m.channels.map((c) => c.channel.id);
+  return {
+    ...liveSession(profile, ch, all),
+    alternates: { all, label: `${m.fixture.home.name} v ${m.fixture.away.name}`, tried: [...tried, ch.id] },
+  };
+}
 
 export function liveSession(profile: Profile, ch: Channel, zapList?: string[]): PlaySession {
   return {
@@ -80,5 +92,6 @@ export function usePlay() {
       start(episodeSession(profile, s, eps, index, fromStart ? undefined : resumePosition(`episode:${eps[index].id}`)));
     },
     playCatchup: (ch: Channel, p: Programme) => profile && start(catchupSession(profile, ch, p)),
+    playMatch: (m: SportsMatch, ch?: Channel) => profile && start(matchSession(profile, m, ch)),
   };
 }
