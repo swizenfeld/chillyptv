@@ -74,7 +74,7 @@ async function step(name, fn) {
 }
 
 const tsx = join(root, 'node_modules', '.bin', 'tsx');
-start(tsx, ['mock/server.ts'], { MOCK_PORT: String(MOCK_PORT) });
+start(tsx, ['mock/server.ts'], { MOCK_PORT: String(MOCK_PORT), MOCK_VOD_DELAY_MS: '4000' });
 const serverEntry = process.env.E2E_USE_SOURCE ? [tsx, ['server/index.ts']] : ['node', ['dist-server/server/index.js']];
 start(serverEntry[0], serverEntry[1], { PORT: String(APP_PORT), CHILLY_DATA_DIR: dataDir, CHILLY_STATIC_DIR: join(root, 'dist'), CHILLY_FIXTURES_BASE: `${MOCK}/espn` });
 await waitFor(`${MOCK}/`);
@@ -108,9 +108,12 @@ await step('add Xtream playlist', async () => {
   await page.getByLabel('Username').fill('demo');
   await page.getByLabel('Password').fill('demo');
   await page.getByLabel('Playlist name').fill('Mock provider');
+  const t0 = Date.now();
   await page.getByRole('button', { name: 'Add & connect' }).click();
   await page.waitForURL(`${APP}/`);
   await page.getByText('232').first().waitFor();
+  // The mock's movie list takes 4 s; channels must not wait for it.
+  if (Date.now() - t0 > 3500) throw new Error(`channels took ${Date.now() - t0} ms: Live TV waited for the movie list`);
   await page.getByText(/days left/).waitFor();
 });
 
@@ -223,13 +226,18 @@ await step('backup feed takes over when a match stream dies', async () => {
 await step('guide fixes: extra source and manual link', async () => {
   await page.goto(`${APP}/settings`);
   const card = page.locator('section.card', { has: page.getByRole('heading', { name: 'TV guide' }) });
-  await card.locator('.guide-sources .value').waitFor();
-  const before = await card.locator('.guide-sources .value').textContent();
+  await card.locator('.guide-sources .value').first().waitFor();
+  const before = await card.locator('.guide-sources .value').first().textContent();
   await card.locator('textarea').fill(`${MOCK}/extra-epg.xml.gz`);
   await card.getByRole('button', { name: 'Save and load' }).click();
   await page.waitForFunction(() => document.querySelectorAll('.source-list li').length >= 2, null, { timeout: 60000 });
   await page.waitForFunction((b) => document.querySelector('.guide-sources .value')?.textContent !== b, before, { timeout: 30000 });
-  if (!/\(100%\)/.test(await card.locator('.guide-sources .value').textContent())) throw new Error('coverage did not reach 100%');
+  // The extra source fills the 27 music channels; the 4 event slots have no guide anywhere.
+  const covered = (t) => Number(t.replace(/,/g, '').match(/^(\d+)/)[1]);
+  const after = await card.locator('.guide-sources .value').first().textContent();
+  if (covered(after) - covered(before) !== 27) throw new Error(`coverage ${before} → ${after}`);
+  // ...two of them get a listing from their own name (one has no time, one is an empty slot).
+  await card.locator('.from-name', { hasText: '2 listed from their names' }).waitFor();
   // A news channel relinked by hand to another guide channel, then reset.
   await page.goto(`${APP}/live`);
   await page.locator('.cat-item', { hasText: 'News' }).click();
@@ -242,6 +250,36 @@ await step('guide fixes: extra source and manual link', async () => {
   await page.getByText('You linked this channel to').waitFor();
   await page.getByRole('button', { name: 'Use automatic matching' }).click();
   await page.locator('.toast', { hasText: 'back to automatic' }).waitFor();
+});
+
+await step('guide trimmed to the playlist; event channels listed from their names', async () => {
+  // The server keeps listings only for linked guide channels, but still names every guide channel.
+  const epgUrl = `${APP}/api/epg?${new URLSearchParams({ url: `${MOCK}/xmltv.php?username=demo&password=demo` })}`;
+  const full = await fetch(epgUrl);
+  const fullData = await full.json();
+  const trimmed = await fetch(epgUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ wants: [['ch1.mock', 'Metro News 1']], keep: ['unlisted.3'] }) });
+  const data = await trimmed.json();
+  const kept = Object.keys(data.programmes).sort().join(',');
+  if (kept !== 'ch1.mock,unlisted.3') throw new Error(`trimmed guide kept ${kept}`);
+  if (Object.keys(data.channels).length !== Object.keys(fullData.channels).length || !data.counts['unlisted.9']) throw new Error('trimmed guide lost guide channel names or counts');
+  // The app's own guide has none of the 60 unlisted channels...
+  await page.goto(`${APP}/live`);
+  // ...yet "Fix guide" still offers them, and linking one fetches its listings.
+  await page.locator('.cat-item', { hasText: 'News' }).click();
+  await page.locator('.channel-row').nth(6).click();
+  await page.getByRole('button', { name: 'Wrong guide? Fix it' }).click();
+  await page.locator('.modal input[aria-label="Search"]').fill('Unlisted Regional 7');
+  const option = page.locator('.modal .overlay-ch', { hasText: 'unlisted.7' });
+  await option.getByText(/\d+ listings/).waitFor();
+  await option.click();
+  await page.locator('.epg-list, .channel-epg').getByText('Regional Hour 7').first().waitFor({ timeout: 30000 });
+  await page.getByRole('button', { name: 'Wrong guide? Fix it' }).click();
+  await page.getByRole('button', { name: 'Use automatic matching' }).click();
+  // An event slot with no guide gets its listing from the name.
+  await page.locator('.cat-item', { hasText: /^\s*Sports\s*\d+\s*$/ }).click();
+  await page.locator('.channel-row', { hasText: 'Peacock 013' }).click();
+  await page.getByText('Aston Villa v. Fulham').first().waitFor();
+  await page.screenshot({ path: join(OUT, '07c-event-listing.png') });
 });
 
 await step('MPEG-TS live via mpegts.js', async () => {

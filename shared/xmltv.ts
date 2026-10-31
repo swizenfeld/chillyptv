@@ -16,6 +16,11 @@ export interface EpgData {
   channels: Record<string, EpgChannel>;
   programmes: Record<string, EpgProgrammeTuple[]>;
   fetchedAt: number;
+  /**
+   * Set when the guide was trimmed to the playlist's channels: listing count per guide
+   * channel in the full guide, so the "Fix guide" picker can still offer every channel.
+   */
+  counts?: Record<string, number>;
 }
 
 const ENTITY: Record<string, string> = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'" };

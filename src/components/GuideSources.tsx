@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import { CheckCircle2, AlertCircle } from 'lucide-react';
 import { useActiveProfile, useProfiles } from '../store/profiles';
 import { useCatalog } from '../store/catalog';
-import { resolveGuideKey, useEpg } from '../store/epg';
+import { programmesFor, resolveGuideKey, useEpg } from '../store/epg';
 import { toast } from '../store/toast';
 
 function shortUrl(u: string): string {
@@ -27,8 +27,12 @@ export function GuideSources() {
   const coverage = useMemo(() => {
     if (!catalog) return null;
     let n = 0;
-    for (const ch of catalog.channels) if (resolveGuideKey(ch)) n++;
-    return { n, total: catalog.channels.length };
+    let fromName = 0;
+    for (const ch of catalog.channels) {
+      if (resolveGuideKey(ch)) n++;
+      else if (programmesFor(ch)[0]?.fromName) fromName++;
+    }
+    return { n, fromName, total: catalog.channels.length };
   }, [catalog, version]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (!profile || !catalog) return null;
@@ -53,6 +57,15 @@ export function GuideSources() {
           <span className="value tabular">
             {coverage.n.toLocaleString()} of {coverage.total.toLocaleString()} ({pct}%)
           </span>
+        </div>
+      )}
+      {coverage && coverage.fromName > 0 && (
+        <div className="setting">
+          <span>
+            Event channels
+            <small className="hint">Channels without a guide whose name gives the event and time (“… | Team A vs. Team B (2026-10-31 14:00)”)</small>
+          </span>
+          <span className="value tabular from-name">{coverage.fromName.toLocaleString()} listed from their names</span>
         </div>
       )}
       {sources.length > 0 && (

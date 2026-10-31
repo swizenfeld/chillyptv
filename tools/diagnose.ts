@@ -23,6 +23,8 @@ import {
   scorePrepared, type Fixture,
 } from '../shared/sports';
 import { normalize } from '../src/lib/search';
+import { trimGuide } from '../shared/guide';
+import { eventListing } from '../shared/events';
 
 // ------------------------------------------------------------------ options
 const argv = process.argv.slice(2);
@@ -311,6 +313,31 @@ async function main() {
   table(['Matched by', 'Channels'], [...how.entries()]);
   const uncovered = channels.filter((c) => !keyOf.has(c.id));
   table(['Category without guide', 'Channels'], top(uncovered, (c) => c.category, 15));
+  // What the app now downloads: listings only for guide channels the playlist links to.
+  {
+    const t0 = performance.now();
+    const trimmed = trimGuide(epg, channels.map((c) => [c.epgId ?? '', c.name]));
+    const ms = Math.round(performance.now() - t0);
+    const full = Buffer.byteLength(JSON.stringify(epg));
+    const slim = Buffer.byteLength(JSON.stringify(trimmed));
+    out(`**Trimmed guide (what the app loads):** ${mb(slim)} instead of ${mb(full)} (${pct(slim, full)}), listings for ${Object.keys(trimmed.programmes).length.toLocaleString()} of ${Object.keys(epg.programmes).length.toLocaleString()} guide channels; trimming took ${ms} ms.`);
+    out();
+  }
+  // Event channels without a guide get a listing from their own name.
+  {
+    const fromName = uncovered.map((c) => ({ c, e: eventListing(c.name) })).filter((x) => x.e);
+    out(`**Listings from event channel names:** ${fromName.length.toLocaleString()} channels without a guide get one (coverage ${pct(keyOf.size, n)} → ${pct(keyOf.size + fromName.length, n)}).`);
+    out();
+    const fmt = (t: number) => new Date(t).toISOString().slice(5, 16).replace('T', ' ');
+    for (const { c, e } of fromName.filter((_, i) => i % Math.max(1, Math.floor(fromName.length / 15)) === 0).slice(0, 15)) out(`- ${fmt(e!.start)} UTC · ${e!.title} ← \`${c.name}\``);
+    const skipped = uncovered.filter((c) => c.tags.event !== 'idle' && /\|/.test(c.name) && /\s(vs?\.?|x)\s/i.test(c.name) && !eventListing(c.name));
+    if (skipped.length) {
+      out();
+      out(`Event-looking names that produced no listing (${skipped.length}), samples:`);
+      for (const c of skipped.slice(0, 10)) out(`- \`${c.name}\``);
+    }
+    out();
+  }
 
   // ---------------------------------------------------------------- football today
   out("## Today's football");

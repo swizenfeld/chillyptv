@@ -133,9 +133,15 @@ sportsChannels[8].name = 'UK: Sky Sports Main Event';
 sportsChannels[9].name = 'LAT| ARG FANATIZ PPV 3: Boca vs River 20:00';
 sportsChannels[11].name = 'LAT| CONMEBOL PPV 1: Racing vs Cruzeiro';
 // US event-channel style (one slot per event, state in the name, "8K EXCLUSIVE" marketing label).
+// Times in names are US Eastern, as US-style providers stamp them.
+const eastern = (ms: number) => {
+  const p = Object.fromEntries(new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', hourCycle: 'h23', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', weekday: 'short', timeZoneName: 'short' }).formatToParts(ms).map((x) => [x.type, x.value]));
+  return { iso: `${p.year}-${p.month}-${p.day} ${p.hour}:${p.minute}:${p.second}`, short: `${p.weekday} ${+p.day} ${new Date(ms).toLocaleString('en-US', { month: 'short', timeZone: 'America/New_York' })} ${p.hour}:${p.minute} ${p.timeZoneName}` };
+};
+const VILLA_START = Math.floor(Date.now() / (30 * 60_000)) * 30 * 60_000 + 330 * 60_000;
 sportsChannels[14].name = 'End | Villa vs. Fulham | all | 31-10-2026 | 00:00 (GMT) | 8K EXCLUSIVE | US: SOCCER PPV 128';
-sportsChannels[15].name = 'US (Peacock 013) | Aston Villa v. Fulham (2026-10-31 15:30:05)';
-sportsChannels[16].name = 'LIVE | ASTON VILLA VS. FULHAM | Sat 31 Oct 16:00 EDT (US) | 8K EXCLUSIVE | US: SOCCER PPV 129';
+sportsChannels[15].name = `US (Peacock 013) | Aston Villa v. Fulham (${eastern(VILLA_START - 10 * 60_000).iso})`;
+sportsChannels[16].name = `LIVE | ASTON VILLA VS. FULHAM | ${eastern(VILLA_START).short} (US) | 8K EXCLUSIVE | US: SOCCER PPV 129`;
 sportsChannels[17].name = '- NO EVENT STREAMING - | 8K EXCLUSIVE | US: ESPN+ PPV 410';
 const FIXTURES: MockFixture[] = [
   { id: 701, league: 'eng.1', home: 'Chelsea', away: 'Manchester United', offsetMin: -40, broadcasts: ['TNT Sports'], guide: [{ ch: 0, title: 'Premier League: Chelsea v Man Utd' }, { ch: 2, title: 'Live: Chelsea vs Manchester United' }, { ch: 12, title: 'Premier League: Chelsea vs Man Utd' }, { ch: 13, title: 'Premier League: Chelsea vs Man Utd' }] },
@@ -153,7 +159,9 @@ const FIXTURES: MockFixture[] = [
 const killed = new Set<string>();
 const MUSIC_CAT = LIVE_CATS.indexOf('Music') + 1;
 for (const c of live) if (c.cat === MUSIC_CAT) c.epgId = '';
-const hasProviderGuide = (c: LiveCh) => c.cat !== MUSIC_CAT;
+// Event slots have no guide entry, as on real providers: the event is only in the channel name.
+const EVENT_SLOT_IDS = new Set(sportsChannels.slice(14, 18).map((c) => c.id));
+const hasProviderGuide = (c: LiveCh) => c.cat !== MUSIC_CAT && !EVENT_SLOT_IDS.has(c.id);
 const fixtureStart = (f: MockFixture) => SPORTS_ANCHOR + f.offsetMin * 60_000;
 
 const movies = Array.from({ length: 60 }, (_, i) => ({
@@ -277,6 +285,9 @@ function liveStreamTs(res: ServerResponse, src: string, opts: { realtime: boolea
   res.on('close', () => p.kill('SIGKILL'));
 }
 
+/** Big providers take ~20 s for the movie list; MOCK_VOD_DELAY_MS imitates that. */
+const VOD_DELAY_MS = Number(process.env.MOCK_VOD_DELAY_MS ?? 0);
+
 function handleApi(req: IncomingMessage, res: ServerResponse, q: URLSearchParams) {
   if (q.get('username') !== USER || q.get('password') !== PASS) {
     return json(res, { user_info: { auth: 0 } });
@@ -307,6 +318,13 @@ function handleApi(req: IncomingMessage, res: ServerResponse, q: URLSearchParams
         added: '1700000000', category_id: String(c.cat), custom_sid: '', tv_archive: c.archive ? 1 : 0, direct_source: '', tv_archive_duration: c.archive ? 3 : 0,
       })));
     case 'get_vod_streams':
+      if (VOD_DELAY_MS) {
+        const now = new URLSearchParams(q);
+        now.set('action', 'get_vod_streams_now');
+        return void setTimeout(() => handleApi(req, res, now), VOD_DELAY_MS);
+      }
+    // falls through
+    case 'get_vod_streams_now':
       return json(res, movies.filter((m) => !catId || String(m.cat + 100) === catId).map((m, i) => ({
         num: i + 1, name: m.name, stream_type: 'movie', stream_id: m.id, stream_icon: `${base(req)}/poster/${m.id}.svg`, rating: m.rating.toFixed(1),
         rating_5based: (m.rating / 2).toFixed(1), added: String(m.added), category_id: String(m.cat + 100), container_extension: m.ext, custom_sid: '', direct_source: '',
@@ -414,6 +432,13 @@ function extraEpg(res: ServerResponse) {
 function xmltv(_req: IncomingMessage, res: ServerResponse) {
   const now = Date.now();
   const out = ['<?xml version="1.0" encoding="UTF-8"?>', '<tv generator-info-name="chillyptv-mock">'];
+  // Big providers' guides describe many channels the playlist doesn't carry.
+  for (let i = 1; i <= 60; i++) {
+    out.push(`<channel id="unlisted.${i}"><display-name>Unlisted Regional ${i}</display-name></channel>`);
+    for (let t = Math.floor(now / 3600_000) * 3600_000 - 86400_000; t < now + 86400_000; t += 3600_000) {
+      out.push(`<programme start="${xmltvDate(t)}" stop="${xmltvDate(t + 3600_000)}" channel="unlisted.${i}"><title>Regional Hour ${i}</title><desc>Programme on a channel this playlist does not carry, padding the guide like real providers do.</desc></programme>`);
+    }
+  }
   for (const c of live) if (hasProviderGuide(c)) out.push(`<channel id="${c.epgId}"><display-name>${escXml(c.name)}</display-name></channel>`);
   for (const c of live) {
     if (!hasProviderGuide(c)) continue;

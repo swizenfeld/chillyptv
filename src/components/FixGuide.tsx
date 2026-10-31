@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { Search } from 'lucide-react';
 import { Img, Modal, Segmented } from './ui';
-import { guideLinkKind, programmesFor, resolveGuideKey, useEpg } from '../store/epg';
+import { guideChannelHasListings, guideLinkKind, programmesFor, resolveGuideKey, useEpg } from '../store/epg';
 import { useLibrary } from '../store/library';
 import { useCatalog } from '../store/catalog';
 import { useActiveProfile } from '../store/profiles';
@@ -38,7 +38,7 @@ export function FixGuideDialog({ channel, onClose }: { channel: Channel; onClose
   const guideResults = useMemo(() => {
     if (!data) return [];
     const term = q.trim() || base;
-    const all = Object.values(data.channels).filter((c) => data.programmes[c.id]?.length);
+    const all = Object.values(data.channels).filter((c) => guideChannelHasListings(c.id));
     return all
       .map((c) => ({ c, score: Math.max(matchScore(term, c.name), matchScore(term, c.id) * 0.8) }))
       .filter((x) => x.score > 0)
@@ -60,6 +60,8 @@ export function FixGuideDialog({ channel, onClose }: { channel: Channel; onClose
   const apply = (value: string | null, label: string) => {
     setOverride(profile.id, channel.id, value);
     invalidate();
+    // The guide only holds listings for linked channels; fetch the newly linked one.
+    if (value?.startsWith('x:') && data && !data.programmes[value.slice(2)] && catalog) void useEpg.getState().load(profile, catalog, { refetch: true });
     toast.success(value ? `${channel.name} now uses the guide of ${label}` : `${channel.name} is back to automatic guide matching`);
     onClose();
   };
@@ -110,7 +112,7 @@ export function FixGuideDialog({ channel, onClose }: { channel: Channel; onClose
               <span className="grow">
                 <span className="ch-name">{c.name}</span>
                 <span className="ch-now-title">
-                  {onNow(c.id) ?? 'No current listing'} · {c.id}
+                  {onNow(c.id) ?? (data?.programmes[c.id] ? 'No current listing' : `${(data?.counts?.[c.id] ?? 0).toLocaleString()} listings`)} · {c.id}
                 </span>
               </span>
             </button>

@@ -90,15 +90,27 @@ export class XtreamClient {
     };
   }
 
-  async catalog(signal?: AbortSignal): Promise<Catalog> {
-    const [liveCats, vodCats, seriesCats, live, vod, series] = await Promise.all([
-      this.get<Json[]>({ action: 'get_live_categories' }, signal),
+  /**
+   * Whole catalogue. All six lists are requested at once; `onLive` gets a channels-only catalogue
+   * as soon as the live lists arrive, because movie lists on big providers take far longer
+   * (16 MB / 18 s for 42,000 movies) and Live TV shouldn't wait for them.
+   */
+  async catalog(signal?: AbortSignal, onLive?: (partial: Catalog) => void): Promise<Catalog> {
+    const liveP = Promise.all([this.get<Json[]>({ action: 'get_live_categories' }, signal), this.get<Json[]>({ action: 'get_live_streams' }, signal)]);
+    const restP = Promise.all([
       this.get<Json[]>({ action: 'get_vod_categories' }, signal).catch(() => []),
       this.get<Json[]>({ action: 'get_series_categories' }, signal).catch(() => []),
-      this.get<Json[]>({ action: 'get_live_streams' }, signal),
       this.get<Json[]>({ action: 'get_vod_streams' }, signal).catch(() => []),
       this.get<Json[]>({ action: 'get_series' }, signal).catch(() => []),
     ]);
+    restP.catch(() => {}); // awaited below; avoid an unhandled rejection if the live lists fail first
+    const [liveCats, live] = await liveP;
+    if (onLive) onLive(this.buildCatalog(liveCats, [], [], live, [], [], true));
+    const [vodCats, seriesCats, vod, series] = await restP;
+    return this.buildCatalog(liveCats, vodCats, seriesCats, live, vod, series, false);
+  }
+
+  private buildCatalog(liveCats: Json[], vodCats: Json[], seriesCats: Json[], live: Json[], vod: Json[], series: Json[], pending: boolean): Catalog {
     const cats = (list: Json[], kind: Category['kind']): Category[] =>
       (Array.isArray(list) ? list : []).map((c) => ({ id: String(c.category_id), name: String(c.category_name ?? 'Unnamed'), kind }));
 
@@ -141,6 +153,7 @@ export class XtreamClient {
       movies,
       series: seriesItems,
       epgUrls: [this.xmltvUrl()],
+      ...(pending ? { libraryPending: true } : {}),
     };
   }
 

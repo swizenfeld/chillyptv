@@ -1,17 +1,20 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { gzipSync } from 'node:zlib';
 import { XmltvParser, type EpgData } from '../shared/xmltv.js';
-import { isHttpUrl, sendError, userAgentFrom } from './util.js';
+import { trimGuide, type GuideWant } from '../shared/guide.js';
+import { isHttpUrl, readBody, sendError, userAgentFrom } from './util.js';
 import { assertAllowedTarget } from './guard.js';
 
 interface CacheEntry {
   at: number;
-  body: Buffer; // gzipped JSON
-  promise?: Promise<Buffer>;
+  data: EpgData | null;
+  promise?: Promise<EpgData>;
 }
 
 const TTL_MS = Number(process.env.CHILLY_EPG_TTL_MIN ?? 180) * 60_000;
 const cache = new Map<string, CacheEntry>();
+/** Parsed guides are large (a 90 MB XMLTV is ~60 MB parsed); keep the most recent few. */
+const MAX_ENTRIES = 4;
 
 /** Downloads (optionally gzipped) XMLTV and streams it through the parser. */
 export async function fetchXmltv(url: string, ua: string, opts: { pastDays: number; futureDays: number }): Promise<EpgData> {
@@ -51,6 +54,12 @@ export async function fetchXmltv(url: string, ua: string, opts: { pastDays: numb
   return parser.finish();
 }
 
+/**
+ * GET  /api/epg?url=…           → the whole guide as JSON.
+ * POST /api/epg?url=…  {wants: [[guideId, name], …], keep: [guideId, …]}
+ *                               → only listings for those channels (see trimGuide).
+ * Both are gzipped when the client accepts it.
+ */
 export async function serveEpg(req: IncomingMessage, res: ServerResponse, params: URLSearchParams): Promise<void> {
   const url = params.get('url');
   if (!isHttpUrl(url)) return sendError(res, 400, 'Missing or invalid url parameter');
@@ -59,6 +68,17 @@ export async function serveEpg(req: IncomingMessage, res: ServerResponse, params
   } catch (e) {
     return sendError(res, 403, (e as Error).message);
   }
+  let wants: GuideWant[] | null = null;
+  let keep: string[] = [];
+  if (req.method === 'POST') {
+    try {
+      const body = JSON.parse(await readBody(req, 16 * 1024 * 1024)) as { wants?: unknown; keep?: unknown };
+      wants = Array.isArray(body.wants) ? (body.wants as unknown[]).filter((w): w is GuideWant => Array.isArray(w) && typeof w[0] === 'string' && typeof w[1] === 'string') : [];
+      keep = Array.isArray(body.keep) ? (body.keep as unknown[]).filter((k): k is string => typeof k === 'string') : [];
+    } catch {
+      return sendError(res, 400, 'Invalid JSON body');
+    }
+  }
   const ua = userAgentFrom(params);
   const pastDays = Math.min(14, Math.max(0, Number(params.get('past') ?? 3)));
   const futureDays = Math.min(14, Math.max(1, Number(params.get('future') ?? 4)));
@@ -66,13 +86,17 @@ export async function serveEpg(req: IncomingMessage, res: ServerResponse, params
   const force = params.get('refresh') === '1';
 
   let entry = cache.get(key);
-  if (force || !entry || Date.now() - entry.at > TTL_MS) {
+  if (force || !entry?.data || Date.now() - entry.at > TTL_MS) {
     if (!entry?.promise) {
-      const promise = fetchXmltv(url, ua, { pastDays, futureDays }).then((data) => gzipSync(JSON.stringify(data)));
-      entry = { at: entry?.at ?? 0, body: entry?.body ?? Buffer.alloc(0), promise };
+      const promise = fetchXmltv(url, ua, { pastDays, futureDays });
+      entry = { at: entry?.at ?? 0, data: entry?.data ?? null, promise };
       cache.set(key, entry);
       promise
-        .then((body) => cache.set(key, { at: Date.now(), body }))
+        .then((data) => {
+          cache.delete(key);
+          cache.set(key, { at: Date.now(), data });
+          while (cache.size > MAX_ENTRIES) cache.delete(cache.keys().next().value!);
+        })
         .catch(() => {
           const e = cache.get(key);
           if (e) e.promise = undefined;
@@ -81,17 +105,19 @@ export async function serveEpg(req: IncomingMessage, res: ServerResponse, params
     try {
       await entry.promise;
     } catch (e) {
-      if (!entry.body.length) return sendError(res, 502, (e as Error).message);
+      if (!entry.data) return sendError(res, 502, (e as Error).message);
     }
     entry = cache.get(key)!;
   }
+  const data = wants ? trimGuide(entry.data!, wants, keep) : entry.data!;
+  const json = Buffer.from(JSON.stringify(data));
   const acceptsGzip = /\bgzip\b/.test(String(req.headers['accept-encoding'] ?? ''));
-  const { gunzipSync } = await import('node:zlib');
-  const body = acceptsGzip ? entry.body : gunzipSync(entry.body);
+  const body = acceptsGzip ? gzipSync(json, { level: 6 }) : json;
   res.writeHead(200, {
     'Content-Type': 'application/json; charset=utf-8',
     'Content-Length': body.length,
     'Cache-Control': 'no-store',
+    'X-Guide-Listings': String(Object.keys(data.programmes).length),
     ...(acceptsGzip ? { 'Content-Encoding': 'gzip' } : {}),
   });
   res.end(body);

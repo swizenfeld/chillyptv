@@ -114,7 +114,9 @@ function VodBrowser({ kind }: { kind: Extract<ContentKind, 'movie' | 'series'> }
             <option value="year">Newest year</option>
           </select>
         </div>
-        {items.length === 0 ? (
+        {items.length === 0 && catalog?.libraryPending ? (
+          <Spinner label={`Loading ${label}… Live TV is ready while this finishes.`} />
+        ) : items.length === 0 ? (
           <Empty icon={<Film size={36} />} title={`No ${label} here`} />
         ) : (
           <VirtualGrid

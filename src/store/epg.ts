@@ -9,7 +9,8 @@ import type { Catalog, Channel, Profile, Programme } from '../lib/types';
 import { useSettings } from './settings';
 import { useLibrary } from './library';
 import { useCatalog } from './catalog';
-import { parseChannelTags } from '../../shared/channels';
+import { autoGuideKey, buildGuideResolver, listingCount, trimGuide, type GuideResolver, type GuideWant } from '../../shared/guide';
+import { eventListing } from '../../shared/events';
 import { channelTags } from '../lib/channelTags';
 
 const STALE_MS = 6 * 60 * 60 * 1000;
@@ -31,33 +32,16 @@ interface EpgState {
   sources: EpgSourceStatus[];
   /** Forget resolved channel → guide links (after a manual fix). */
   invalidate: () => void;
-  load: (profile: Profile, catalog: Catalog, opts?: { force?: boolean }) => Promise<void>;
+  /** `force` re-downloads on the server too; `refetch` only skips the "still fresh" check. */
+  load: (profile: Profile, catalog: Catalog, opts?: { force?: boolean; refetch?: boolean }) => Promise<void>;
 }
 
-let resolver: { byId: Map<string, string>; byName: Map<string, string>; byBase: Map<string, string> } | null = null;
-const resolvedCache = new Map<string, Programme[]>();
+let resolver: GuideResolver | null = null;
+// Keyed by channel id; the channel object is kept so a playlist refresh (new event names) recomputes.
+const resolvedCache = new Map<string, { ch: Channel; list: Programme[] }>();
 
-/**
- * Indexes guide channels by id, display name and cleaned base name ("ESPN 2 HD" → "espn 2").
- * When several guide channels share a name, the one with the most listings wins.
- */
 function buildResolver(data: EpgData): void {
-  const byId = new Map<string, string>();
-  const byName = new Map<string, string>();
-  const byBase = new Map<string, string>();
-  const size = (id: string) => data.programmes[id]?.length ?? 0;
-  const put = (m: Map<string, string>, k: string, id: string) => {
-    const prev = m.get(k);
-    if (k && (!prev || size(id) > size(prev))) m.set(k, id);
-  };
-  for (const id of Object.keys(data.programmes)) byId.set(id.toLowerCase(), id);
-  for (const ch of Object.values(data.channels)) {
-    byId.set(ch.id.toLowerCase(), ch.id);
-    put(byName, normalize(ch.name), ch.id);
-    const base = parseChannelTags(ch.name).base;
-    if (base.length >= 3) put(byBase, base, ch.id);
-  }
-  resolver = { byId, byName, byBase };
+  resolver = buildGuideResolver(data);
   resolvedCache.clear();
 }
 
@@ -71,14 +55,7 @@ export function resolveGuideKey(ch: Channel, depth = 0): string | undefined {
     const other = useCatalog.getState().index?.channelById.get(override.slice(2));
     if (other) return resolveGuideKey(other, depth + 1);
   }
-  let key = ch.epgId ? resolver.byId.get(ch.epgId.toLowerCase()) : undefined;
-  key ??= resolver.byName.get(normalize(ch.name));
-  if (!key && ch.epgId) key = resolver.byName.get(normalize(ch.epgId));
-  if (!key) {
-    const base = channelTags(ch).base;
-    if (base.length >= 3) key = resolver.byBase.get(base);
-  }
-  return key;
+  return autoGuideKey(resolver, ch.epgId, ch.name, channelTags(ch).base);
 }
 
 /** How the channel's guide was found, for the "Fix guide" dialog. */
@@ -94,10 +71,28 @@ function toProgramme(t: EpgProgrammeTuple, shiftMs: number): Programme {
   return { start: t[0] + shiftMs, end: t[1] + shiftMs, title: t[2], desc: t[3] || undefined, subtitle: t[4] || undefined, category: t[5] || undefined, episode: t[6] || undefined };
 }
 
-async function downloadEpg(url: string, profile: Profile, force: boolean): Promise<EpgData> {
+/**
+ * What the guide must cover: every playlist channel ([guide id, name]) and the guide channels
+ * picked by hand in "Fix guide". Everything else is dropped — on a big provider most of the guide
+ * describes channels the playlist doesn't have.
+ */
+function guideWants(profile: Profile, catalog: Catalog): { wants: GuideWant[]; keep: string[] } {
+  const overrides = useLibrary.getState().epgOverrides[profile.id] ?? {};
+  return {
+    wants: catalog.channels.map((c) => [c.epgId ?? '', c.name]),
+    keep: Object.values(overrides).filter((v) => v.startsWith('x:')).map((v) => v.slice(2)),
+  };
+}
+
+async function downloadEpg(url: string, profile: Profile, catalog: Catalog, force: boolean): Promise<EpgData> {
   const s = useSettings.getState();
+  const { wants, keep } = guideWants(profile, catalog);
   if (proxyActive() && backendHealth()?.ok) {
-    const res = await fetch(epgEndpoint(url, { ua: profile.userAgent, past: s.epgPastDays, future: s.epgFutureDays, refresh: force }));
+    const res = await fetch(epgEndpoint(url, { ua: profile.userAgent, past: s.epgPastDays, future: s.epgFutureDays, refresh: force }), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ wants, keep }),
+    });
     if (!res.ok) {
       const body = await res.json().catch(() => ({}));
       throw new Error((body as { error?: string }).error ?? `EPG HTTP ${res.status}`);
@@ -106,14 +101,15 @@ async function downloadEpg(url: string, profile: Profile, force: boolean): Promi
   }
   const text = await fetchUpstreamText(url, { ua: profile.userAgent });
   const now = Date.now();
-  return parseXmltv(text, { from: now - s.epgPastDays * 86_400_000, to: now + s.epgFutureDays * 86_400_000 });
+  return trimGuide(parseXmltv(text, { from: now - s.epgPastDays * 86_400_000, to: now + s.epgFutureDays * 86_400_000 }), wants, keep);
 }
 
 /** `a` (earlier source) wins for channels both have; `b` fills the rest. */
 function merge(a: EpgData, b: EpgData): EpgData {
   const programmes = { ...a.programmes };
   for (const [id, list] of Object.entries(b.programmes)) if (!programmes[id]?.length) programmes[id] = list;
-  return { channels: { ...b.channels, ...a.channels }, programmes, fetchedAt: Math.min(a.fetchedAt, b.fetchedAt) };
+  const counts = a.counts || b.counts ? { ...(b.counts ?? {}), ...(a.counts ?? {}) } : undefined;
+  return { channels: { ...b.channels, ...a.channels }, programmes, fetchedAt: Math.min(a.fetchedAt, b.fetchedAt), ...(counts ? { counts } : {}) };
 }
 
 export const useEpg = create<EpgState>()((set, get) => ({
@@ -142,7 +138,12 @@ export const useEpg = create<EpgState>()((set, get) => ({
       }
     }
     const current = get().data;
-    if (current && !opts.force && Date.now() - current.fetchedAt < STALE_MS) return;
+    // A trimmed guide must be fetched again when the playlist gains channels it has no listings for.
+    const missing = () => !!current?.counts && catalog.channels.some((ch) => {
+      const k = resolveGuideKey(ch);
+      return !!k && !current.programmes[k] && (current.counts![k] ?? 0) > 0;
+    });
+    if (current && !opts.force && !opts.refetch && Date.now() - current.fetchedAt < STALE_MS && !missing()) return;
     // Provider guide first; extra sources only fill channels it lacks.
     const urls = [...new Set([...catalog.epgUrls, ...(profile.extraEpgUrls ?? [])].map((u) => u.trim()).filter(Boolean))];
     if (!urls.length) {
@@ -155,9 +156,9 @@ export const useEpg = create<EpgState>()((set, get) => ({
       const sources: EpgSourceStatus[] = [];
       for (const url of urls.slice(0, 8)) {
         try {
-          const d = await downloadEpg(url, profile, !!opts.force);
+          const d = await downloadEpg(url, profile, catalog, !!opts.force);
           merged = merged ? merge(merged, d) : d;
-          sources.push({ url, ok: true, channels: Object.keys(d.programmes).length });
+          sources.push({ url, ok: true, channels: Object.keys(d.counts ?? d.programmes).length });
         } catch (e) {
           sources.push({ url, ok: false, channels: 0, error: (e as Error).message });
         }
@@ -174,18 +175,41 @@ export const useEpg = create<EpgState>()((set, get) => ({
   },
 }));
 
-/** Resolves programmes for a channel from the loaded XMLTV (sync, cached). */
+const eventCache = new WeakMap<Channel, Programme[]>();
+
+/**
+ * A listing built from an event channel's own name ("US (ESPN+ 166) | Green Bay vs. Milwaukee
+ * (2026-10-31 14:03:05)"). Keyed by channel object: a playlist refresh brings new names.
+ */
+function eventProgrammes(ch: Channel): Programme[] {
+  let list = eventCache.get(ch);
+  if (!list) {
+    const e = eventListing(ch.name);
+    list = e ? [{ start: e.start, end: e.end, title: e.title, category: e.category, fromName: true }] : [];
+    eventCache.set(ch, list);
+  }
+  return list;
+}
+
+/** Resolves programmes for a channel from the loaded XMLTV, or from its name for event channels (sync, cached). */
 export function programmesFor(ch: Channel | undefined): Programme[] {
   if (!ch) return [];
   const data = useEpg.getState().data;
-  if (!data || !resolver) return [];
+  if (!data || !resolver) return eventProgrammes(ch);
   const cached = resolvedCache.get(ch.id);
-  if (cached) return cached;
+  if (cached?.ch === ch) return cached.list;
   const key = resolveGuideKey(ch);
   const shift = useSettings.getState().epgShiftHours * 3_600_000;
-  const list = key ? (data.programmes[key] ?? []).map((t) => toProgramme(t, shift)) : [];
-  resolvedCache.set(ch.id, list);
+  let list = key ? (data.programmes[key] ?? []).map((t) => toProgramme(t, shift)) : [];
+  if (!list.length) list = eventProgrammes(ch);
+  resolvedCache.set(ch.id, { ch, list });
   return list;
+}
+
+/** Guide channels with listings, for the manual "Fix guide" picker. */
+export function guideChannelHasListings(id: string): boolean {
+  const data = useEpg.getState().data;
+  return !!data && listingCount(data, id) > 0;
 }
 
 export function nowNext(list: Programme[], now = Date.now()): { now?: Programme; next?: Programme } {
