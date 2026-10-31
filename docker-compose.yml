@@ -1,0 +1,15 @@
+services:
+  chillyptv:
+    build: .
+    image: chillyptv:latest
+    ports:
+      - "8787:8787"
+    environment:
+      # Optional: protect the UI and proxy with a password (HTTP Basic auth, any username).
+      # CHILLY_PASSWORD: change-me
+      TZ: Europe/London
+    volumes:
+      - chilly-data:/data
+    restart: unless-stopped
+volumes:
+  chilly-data:

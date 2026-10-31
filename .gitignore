@@ -1,0 +1,9 @@
+node_modules
+dist
+dist-server
+data
+recordings
+mock/media
+*.log
+.DS_Store
+test-results
