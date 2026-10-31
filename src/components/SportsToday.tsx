@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { Trophy } from 'lucide-react';
-import { LEAGUE_BY_ID, type LeagueGroup } from '../../shared/sports';
+import { GROUPS, LEAGUE_BY_ID, type LeagueGroup } from '../../shared/sports';
 import type { SportsMatch, SportsToday as SportsData } from '../store/sports';
 import type { Channel } from '../lib/types';
 import { useSettings } from '../store/settings';
@@ -8,7 +8,6 @@ import { formatClock } from '../lib/format';
 import { quickFilter } from '../lib/search';
 import { Empty, Img, Spinner } from './ui';
 
-const GROUP_LABEL: Record<LeagueGroup, string> = { MLS: 'MLS', Champions: 'Champions', England: 'England', Spain: 'Spain', Argentina: 'Argentina' };
 
 export function SportsToday({ data, filter, selectedId, onSelect, onOpen }: {
   data: SportsData;
@@ -20,7 +19,7 @@ export function SportsToday({ data, filter, selectedId, onSelect, onOpen }: {
   const [group, setGroup] = useState<LeagueGroup | 'all'>('all');
   const groups = useMemo(() => {
     const present = new Set(data.matches.map((m) => LEAGUE_BY_ID.get(m.fixture.leagueId)?.group).filter(Boolean) as LeagueGroup[]);
-    return (Object.keys(GROUP_LABEL) as LeagueGroup[]).filter((g) => present.has(g));
+    return GROUPS.map((g) => g.id).filter((g) => present.has(g));
   }, [data.matches]);
 
   const matches = useMemo(() => {
@@ -42,7 +41,7 @@ export function SportsToday({ data, filter, selectedId, onSelect, onOpen }: {
         <div className="sports-chips" role="tablist" aria-label="Competitions">
           {(['all', ...groups] as (LeagueGroup | 'all')[]).map((g) => (
             <button key={g} role="tab" aria-selected={group === g} className={group === g ? 'active' : ''} onClick={() => setGroup(g)}>
-              {g === 'all' ? 'All' : GROUP_LABEL[g]}
+              {g === 'all' ? 'All' : g}
             </button>
           ))}
         </div>

@@ -128,3 +128,42 @@ describe('ESPN scoreboard parsing', () => {
     expect(f.away).toMatchObject({ name: 'Manchester United', short: 'Man United', score: '1' });
   });
 });
+
+describe('expanded competitions', () => {
+  const all = ['ita.1', 'ita.coppa_italia', 'uefa.europa', 'uefa.europa.conf', 'uefa.euro', 'uefa.nations', 'fifa.world', 'fifa.cwc', 'fifa.worldq.conmebol', 'fifa.worldq.uefa', 'conmebol.libertadores', 'conmebol.sudamericana', 'conmebol.america', 'arg.1', 'arg.2', 'arg.copa_lpf', 'eng.1'];
+  it.each([
+    ['Serie A: Inter vs Milan', 'ita.1'],
+    ['Coppa Italia - Juventus vs Roma', 'ita.coppa_italia'],
+    ['UEFA Europa League: Roma vs Porto', 'uefa.europa'],
+    ['Conference League: Chelsea vs Betis', 'uefa.europa.conf'],
+    ['Eurocopa: España vs Italia', 'uefa.euro'],
+    ['Liga de Naciones: Francia vs España', 'uefa.nations'],
+    ['Copa Mundial: Argentina vs Francia', 'fifa.world'],
+    ['Mundial de Clubes: Real Madrid vs Boca Juniors', 'fifa.cwc'],
+    ['Eliminatorias Sudamericanas: Argentina vs Brasil', 'fifa.worldq.conmebol'],
+    ['World Cup Qualifiers: England vs Serbia', 'fifa.worldq.uefa'],
+    ['Copa Libertadores: River vs Palmeiras', 'conmebol.libertadores'],
+    ['Copa Sudamericana: Racing vs Cruzeiro', 'conmebol.sudamericana'],
+    ['Copa América: Argentina vs Colombia', 'conmebol.america'],
+    ['Primera Nacional: Chacarita vs Quilmes', 'arg.2'],
+    ['Copa de la Liga: Boca vs River', 'arg.copa_lpf'],
+  ])('%s → %s', (title, league) => {
+    expect(detectGuideFixture(prog(title), all)?.leagueId).toBe(league);
+  });
+  it('the more specific competition wins, and is dropped if not followed', () => {
+    // "club world cup" also contains "world cup"; Brazil's "Série A" also contains "serie a".
+    expect(detectGuideFixture(prog('FIFA Club World Cup: Chelsea vs Flamengo'), ['fifa.world'])).toBeNull();
+    expect(detectGuideFixture(prog('Brasileirão Série A: Flamengo vs Palmeiras'), ['ita.1'])).toBeNull();
+    expect(detectGuideFixture(prog('Brasileirão Série A: Flamengo vs Palmeiras'), ['ita.1', 'bra.1'])?.leagueId).toBe('bra.1');
+  });
+  it('every competition has a group, keywords and a unique id', async () => {
+    const { LEAGUES, GROUPS } = await import('../../shared/sports');
+    const groups = new Set(GROUPS.map((g) => g.id));
+    expect(new Set(LEAGUES.map((l) => l.id)).size).toBe(LEAGUES.length);
+    for (const l of LEAGUES) {
+      expect(groups.has(l.group)).toBe(true);
+      expect(l.keywords.length).toBeGreaterThan(0);
+      for (const k of l.keywords) expect(normalize(k)).toBe(k);
+    }
+  });
+});

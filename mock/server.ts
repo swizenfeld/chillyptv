@@ -125,6 +125,7 @@ sportsChannels[5].name = 'AR: TNT Sports HD';
 sportsChannels[8].name = 'UK: Sky Sports Main Event';
 // Latin-American style event channel: the match is in the channel name, not the guide.
 sportsChannels[9].name = 'LAT| ARG FANATIZ PPV 3: Boca vs River 20:00';
+sportsChannels[11].name = 'LAT| CONMEBOL PPV 1: Racing vs Cruzeiro';
 const FIXTURES: MockFixture[] = [
   { id: 701, league: 'eng.1', home: 'Chelsea', away: 'Manchester United', offsetMin: -40, broadcasts: ['TNT Sports'], guide: [{ ch: 0, title: 'Premier League: Chelsea v Man Utd' }, { ch: 2, title: 'Live: Chelsea vs Manchester United' }] },
   { id: 702, league: 'eng.1', home: 'Tottenham Hotspur', away: 'Crystal Palace', offsetMin: 90, broadcasts: ['Sky Sports'], guide: [{ ch: 1, title: 'Premier League: Spurs v Palace' }] },
@@ -135,6 +136,8 @@ const FIXTURES: MockFixture[] = [
   { id: 707, league: 'eng.1', home: 'Aston Villa', away: 'Fulham', offsetMin: 330, broadcasts: ['Sky Sports'] },
   { id: 708, league: 'esp.1', home: 'Levante', away: 'Atlético Madrid', offsetMin: 30, broadcasts: ['ESPN+'] },
   { id: 709, league: 'arg.1', home: 'Boca Juniors', away: 'River Plate', offsetMin: 180, broadcasts: ['ESPN Premium'] },
+  { id: 710, league: 'ita.1', home: 'Internazionale', away: 'AC Milan', offsetMin: 120, broadcasts: ['Paramount+'], guide: [{ ch: 10, title: 'Serie A: Inter vs Milan' }] },
+  { id: 711, league: 'conmebol.sudamericana', home: 'Racing Club', away: 'Cruzeiro', offsetMin: 270, broadcasts: ['ESPN'] },
 ];
 const fixtureStart = (f: MockFixture) => SPORTS_ANCHOR + f.offsetMin * 60_000;
 

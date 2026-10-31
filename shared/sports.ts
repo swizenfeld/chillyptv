@@ -4,32 +4,91 @@
  * Pure functions — shared by the server, the browser and the unit tests.
  */
 
-export type LeagueGroup = 'MLS' | 'Champions' | 'England' | 'Spain' | 'Argentina';
+export type Region = 'Europe' | 'International' | 'South America' | 'North America';
+
+/** Display order of groups; each group belongs to one region. */
+export const GROUPS = [
+  { id: 'England', region: 'Europe' },
+  { id: 'Spain', region: 'Europe' },
+  { id: 'Italy', region: 'Europe' },
+  { id: 'Germany', region: 'Europe' },
+  { id: 'France', region: 'Europe' },
+  { id: 'Rest of Europe', region: 'Europe' },
+  { id: 'European cups', region: 'Europe' },
+  { id: 'FIFA', region: 'International' },
+  { id: 'UEFA nations', region: 'International' },
+  { id: 'CONMEBOL nations', region: 'International' },
+  { id: 'Argentina', region: 'South America' },
+  { id: 'CONMEBOL clubs', region: 'South America' },
+  { id: 'Brazil', region: 'South America' },
+  { id: 'USA & Mexico', region: 'North America' },
+] as const satisfies readonly { id: string; region: Region }[];
+
+export type LeagueGroup = (typeof GROUPS)[number]['id'];
+export const REGIONS: Region[] = ['Europe', 'International', 'South America', 'North America'];
 
 export interface League {
   /** ESPN soccer league slug, e.g. "eng.1". */
   id: string;
   name: string;
   group: LeagueGroup;
-  /** How TV guides tend to write the competition (normalised, lowercase). */
+  /** How TV guides write the competition, in English and Spanish (normalised, lowercase). */
   keywords: string[];
   defaultOn: boolean;
 }
 
 export const LEAGUES: League[] = [
-  { id: 'usa.1', name: 'MLS', group: 'MLS', keywords: ['mls', 'major league soccer'], defaultOn: true },
-  { id: 'uefa.champions', name: 'UEFA Champions League', group: 'Champions', keywords: ['champions league', 'uefa champions', 'ucl', 'liga de campeones', 'ligue des champions'], defaultOn: true },
-  { id: 'concacaf.champions', name: 'CONCACAF Champions Cup', group: 'Champions', keywords: ['concacaf champions', 'champions cup'], defaultOn: true },
-  { id: 'conmebol.libertadores', name: 'Copa Libertadores', group: 'Champions', keywords: ['libertadores'], defaultOn: true },
+  // Europe — domestic
   { id: 'eng.1', name: 'Premier League', group: 'England', keywords: ['premier league', 'epl', 'barclays premier', 'liga premier', 'futbol ingles'], defaultOn: true },
   { id: 'eng.2', name: 'EFL Championship', group: 'England', keywords: ['efl championship', 'sky bet championship'], defaultOn: true },
-  { id: 'eng.fa', name: 'FA Cup', group: 'England', keywords: ['fa cup', 'emirates fa cup'], defaultOn: true },
-  { id: 'eng.league_cup', name: 'Carabao Cup', group: 'England', keywords: ['carabao cup', 'efl cup', 'league cup'], defaultOn: true },
-  { id: 'esp.1', name: 'LaLiga', group: 'Spain', keywords: ['laliga', 'la liga', 'liga ea sports', 'liga espanola', 'primera division espana'], defaultOn: true },
+  { id: 'eng.fa', name: 'FA Cup', group: 'England', keywords: ['fa cup', 'emirates fa cup', 'copa fa'], defaultOn: true },
+  { id: 'eng.league_cup', name: 'Carabao Cup', group: 'England', keywords: ['carabao cup', 'efl cup', 'league cup', 'copa de la liga inglesa'], defaultOn: true },
+  { id: 'eng.charity', name: 'Community Shield', group: 'England', keywords: ['community shield'], defaultOn: true },
+  { id: 'esp.1', name: 'LaLiga', group: 'Spain', keywords: ['laliga', 'la liga', 'liga ea sports', 'liga espanola', 'primera division espana', 'futbol espanol'], defaultOn: true },
   { id: 'esp.2', name: 'LaLiga 2', group: 'Spain', keywords: ['laliga 2', 'laliga hypermotion', 'segunda division'], defaultOn: false },
   { id: 'esp.copa_del_rey', name: 'Copa del Rey', group: 'Spain', keywords: ['copa del rey'], defaultOn: true },
-  { id: 'arg.1', name: 'Liga Profesional', group: 'Argentina', keywords: ['liga profesional', 'lpf', 'torneo betano', 'futbol argentino', 'primera division argentina', 'liga argentina', 'torneo apertura', 'torneo clausura', 'copa de la liga'], defaultOn: true },
+  { id: 'esp.super_cup', name: 'Supercopa de España', group: 'Spain', keywords: ['supercopa de espana', 'spanish super cup'], defaultOn: true },
+  { id: 'ita.1', name: 'Serie A', group: 'Italy', keywords: ['serie a', 'serie a enilive', 'calcio', 'liga italiana', 'futbol italiano'], defaultOn: true },
+  { id: 'ita.2', name: 'Serie B', group: 'Italy', keywords: ['serie b'], defaultOn: false },
+  { id: 'ita.coppa_italia', name: 'Coppa Italia', group: 'Italy', keywords: ['coppa italia', 'copa italia'], defaultOn: true },
+  { id: 'ita.super_cup', name: 'Supercoppa Italiana', group: 'Italy', keywords: ['supercoppa', 'supercopa de italia', 'supercopa italiana'], defaultOn: true },
+  { id: 'ger.1', name: 'Bundesliga', group: 'Germany', keywords: ['bundesliga', 'futbol aleman'], defaultOn: false },
+  { id: 'ger.dfb_pokal', name: 'DFB-Pokal', group: 'Germany', keywords: ['dfb pokal', 'copa de alemania'], defaultOn: false },
+  { id: 'fra.1', name: 'Ligue 1', group: 'France', keywords: ['ligue 1', 'liga francesa', 'futbol frances'], defaultOn: false },
+  { id: 'fra.coupe_de_france', name: 'Coupe de France', group: 'France', keywords: ['coupe de france', 'copa de francia'], defaultOn: false },
+  { id: 'por.1', name: 'Liga Portugal', group: 'Rest of Europe', keywords: ['liga portugal', 'primeira liga', 'liga portuguesa'], defaultOn: false },
+  { id: 'ned.1', name: 'Eredivisie', group: 'Rest of Europe', keywords: ['eredivisie'], defaultOn: false },
+  { id: 'sco.1', name: 'Scottish Premiership', group: 'Rest of Europe', keywords: ['scottish premiership'], defaultOn: false },
+  // Europe — club competitions
+  { id: 'uefa.champions', name: 'UEFA Champions League', group: 'European cups', keywords: ['champions league', 'uefa champions', 'ucl', 'liga de campeones', 'ligue des champions'], defaultOn: true },
+  { id: 'uefa.europa', name: 'UEFA Europa League', group: 'European cups', keywords: ['europa league', 'uefa europa', 'liga europa', 'uel'], defaultOn: true },
+  { id: 'uefa.europa.conf', name: 'UEFA Conference League', group: 'European cups', keywords: ['conference league', 'uecl', 'liga conferencia'], defaultOn: true },
+  { id: 'uefa.super_cup', name: 'UEFA Super Cup', group: 'European cups', keywords: ['uefa super cup', 'supercopa de europa', 'supercopa uefa'], defaultOn: true },
+  // International — national teams
+  { id: 'fifa.world', name: 'FIFA World Cup', group: 'FIFA', keywords: ['world cup', 'copa mundial', 'copa del mundo', 'mundial'], defaultOn: true },
+  { id: 'fifa.cwc', name: 'FIFA Club World Cup', group: 'FIFA', keywords: ['club world cup', 'mundial de clubes'], defaultOn: true },
+  { id: 'fifa.friendly', name: 'International friendlies', group: 'FIFA', keywords: ['international friendly', 'amistoso internacional', 'partido amistoso'], defaultOn: true },
+  { id: 'uefa.euro', name: 'UEFA Euro', group: 'UEFA nations', keywords: ['uefa euro', 'eurocopa', 'european championship', 'euro 2028'], defaultOn: true },
+  { id: 'uefa.euroq', name: 'Euro qualifiers', group: 'UEFA nations', keywords: ['euro qualifiers', 'euro qualifying', 'clasificacion eurocopa', 'eliminatorias eurocopa'], defaultOn: true },
+  { id: 'uefa.nations', name: 'UEFA Nations League', group: 'UEFA nations', keywords: ['nations league', 'liga de naciones'], defaultOn: true },
+  { id: 'fifa.worldq.uefa', name: 'World Cup qualifiers (Europe)', group: 'UEFA nations', keywords: ['world cup qualifiers', 'world cup qualifying', 'eliminatorias europeas', 'clasificacion mundial europa'], defaultOn: true },
+  { id: 'conmebol.america', name: 'Copa América', group: 'CONMEBOL nations', keywords: ['copa america'], defaultOn: true },
+  { id: 'fifa.worldq.conmebol', name: 'World Cup qualifiers (South America)', group: 'CONMEBOL nations', keywords: ['eliminatorias sudamericanas', 'eliminatorias conmebol', 'eliminatorias'], defaultOn: true },
+  // South America
+  { id: 'arg.1', name: 'Liga Profesional', group: 'Argentina', keywords: ['liga profesional', 'lpf', 'torneo betano', 'futbol argentino', 'primera division argentina', 'liga argentina', 'torneo apertura', 'torneo clausura'], defaultOn: true },
+  { id: 'arg.2', name: 'Primera Nacional', group: 'Argentina', keywords: ['primera nacional', 'primera b nacional'], defaultOn: true },
   { id: 'arg.copa', name: 'Copa Argentina', group: 'Argentina', keywords: ['copa argentina'], defaultOn: true },
+  { id: 'arg.copa_lpf', name: 'Copa de la Liga', group: 'Argentina', keywords: ['copa de la liga', 'copa lpf'], defaultOn: true },
+  { id: 'arg.supercopa', name: 'Supercopa Argentina', group: 'Argentina', keywords: ['supercopa argentina'], defaultOn: true },
+  { id: 'conmebol.libertadores', name: 'Copa Libertadores', group: 'CONMEBOL clubs', keywords: ['libertadores'], defaultOn: true },
+  { id: 'conmebol.sudamericana', name: 'Copa Sudamericana', group: 'CONMEBOL clubs', keywords: ['sudamericana'], defaultOn: true },
+  { id: 'conmebol.recopa', name: 'Recopa Sudamericana', group: 'CONMEBOL clubs', keywords: ['recopa sudamericana', 'recopa'], defaultOn: true },
+  { id: 'bra.1', name: 'Brasileirão', group: 'Brazil', keywords: ['brasileirao', 'campeonato brasileiro', 'futbol brasileno'], defaultOn: false },
+  // North America
+  { id: 'usa.1', name: 'MLS', group: 'USA & Mexico', keywords: ['mls', 'major league soccer'], defaultOn: true },
+  { id: 'concacaf.champions', name: 'CONCACAF Champions Cup', group: 'USA & Mexico', keywords: ['concacaf champions', 'champions cup'], defaultOn: true },
+  { id: 'concacaf.leagues.cup', name: 'Leagues Cup', group: 'USA & Mexico', keywords: ['leagues cup'], defaultOn: false },
+  { id: 'mex.1', name: 'Liga MX', group: 'USA & Mexico', keywords: ['liga mx', 'futbol mexicano'], defaultOn: false },
 ];
 
 export const LEAGUE_BY_ID = new Map(LEAGUES.map((l) => [l.id, l]));
@@ -237,8 +296,12 @@ const VS = /\s+(?:vs?\.?|x|-|–|—)\s+/i;
  */
 export function detectGuideFixture(p: GuideProgramme, leagueIds: string[]): Fixture | null {
   const text = normalize(`${p.title} ${p.subtitle ?? ''}`);
-  const league = leagueIds.map((id) => LEAGUE_BY_ID.get(id)!).find((l) => l && l.keywords.some((k) => mentions(text, k)));
-  if (!league) return null;
+  // Most specific competition across the whole catalogue ("club world cup" beats "world cup",
+  // "brasileirao serie a" beats "serie a"), then keep it only if the viewer follows it.
+  let league: League | undefined;
+  let bestLen = 0;
+  for (const l of LEAGUES) for (const k of l.keywords) if (k.length > bestLen && mentions(text, k)) [league, bestLen] = [l, k.length];
+  if (!league || !leagueIds.includes(league.id)) return null;
   // Drop the competition prefix ("Premier League:", "LALIGA EA SPORTS -", "Live:") then split on vs/v/-.
   let title = p.title.replace(/^\s*(live|en vivo|directo)\s*[:|-]\s*/i, '');
   const colon = title.search(/[:|]/);

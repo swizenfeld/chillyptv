@@ -2,6 +2,9 @@ import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { DEFAULT_LEAGUES } from '../../shared/sports';
 
+/** Competitions that existed before settings v3 (anything else is new to existing users). */
+const V2_LEAGUES = ['usa.1', 'uefa.champions', 'concacaf.champions', 'conmebol.libertadores', 'eng.1', 'eng.2', 'eng.fa', 'eng.league_cup', 'esp.1', 'esp.2', 'esp.copa_del_rey', 'arg.1', 'arg.copa'];
+
 export type Theme = 'dark' | 'light' | 'oled';
 export type AspectMode = 'contain' | 'cover' | 'fill' | '16:9' | '4:3';
 
@@ -89,11 +92,16 @@ export const useSettings = create<SettingsState>()(
     }),
     {
       name: 'chilly.settings',
-      version: 2,
-      // v2: the default accent moved from sky blue to cinema red; keep any colour the viewer chose.
+      version: 3,
       migrate: (persisted, version) => {
         const state = (persisted ?? {}) as Partial<Settings>;
+        // v2: the default accent moved from sky blue to cinema red; keep any colour the viewer chose.
         if (version < 2 && (!state.accent || state.accent === '#38bdf8')) state.accent = '#e50914';
+        // v3: many more competitions. Switch on the new defaults without touching earlier choices.
+        if (version < 3 && Array.isArray(state.sportsLeagues)) {
+          const known = new Set(V2_LEAGUES);
+          state.sportsLeagues = [...new Set([...state.sportsLeagues, ...DEFAULT_LEAGUES.filter((id) => !known.has(id))])];
+        }
         return state as SettingsState;
       },
       merge: (persisted, current) => ({ ...current, ...(persisted as object) }),

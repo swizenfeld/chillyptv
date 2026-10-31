@@ -44,9 +44,17 @@ async function fetchLeagueDay(leagueId: string, day: string): Promise<Fixture[]>
   }
 }
 
+/** Runs `fn` over `items` with at most `limit` in flight (dozens of competitions, politely). */
+async function pool<T>(items: T[], limit: number, fn: (item: T) => Promise<void>): Promise<void> {
+  let next = 0;
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (next < items.length) await fn(items[next++]);
+  }));
+}
+
 /** GET /api/sports/fixtures?leagues=eng.1,esp.1&from=<ms>&to=<ms> */
 export async function handleFixtures(_req: IncomingMessage, res: ServerResponse, params: URLSearchParams): Promise<void> {
-  const leagues = (params.get('leagues') ?? '').split(',').filter((id) => LEAGUE_BY_ID.has(id)).slice(0, 20);
+  const leagues = [...new Set((params.get('leagues') ?? '').split(','))].filter((id) => LEAGUE_BY_ID.has(id));
   if (!leagues.length) return sendError(res, 400, 'No known leagues requested');
   const from = Number(params.get('from')) || Date.now() - 12 * 3_600_000;
   const to = Number(params.get('to')) || Date.now() + 24 * 3_600_000;
@@ -58,14 +66,12 @@ export async function handleFixtures(_req: IncomingMessage, res: ServerResponse,
 
   const fixtures = new Map<string, Fixture>();
   const failed = new Map<string, string>();
-  await Promise.all(
-    leagues.map(async (id) => {
+  await pool(leagues, 6, async (id) => {
       const results = await Promise.allSettled([...days].map((d) => fetchLeagueDay(id, d)));
       const ok = results.filter((r): r is PromiseFulfilledResult<Fixture[]> => r.status === 'fulfilled');
       if (!ok.length) failed.set(id, describe((results[0] as PromiseRejectedResult).reason));
       for (const r of ok) for (const f of r.value) if (f.state === 'in' || (f.start >= from && f.start < to)) fixtures.set(f.id, f);
-    }),
-  );
+  });
   const errors = [...failed].map(([league, error]) => ({ league, error }));
   if (errors.length) console.warn(`[sports] fixtures unavailable for ${errors.map((e) => `${e.league} (${e.error})`).join(', ')}`);
   sendJson(res, 200, { fixtures: [...fixtures.values()].sort((a, b) => a.start - b.start), errors, leagues: leagues.length, fetchedAt: Date.now() });

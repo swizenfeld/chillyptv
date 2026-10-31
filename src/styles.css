@@ -3393,3 +3393,29 @@ div.match-ch-logo {
   text-align: right;
   font-variant-numeric: tabular-nums;
 }
+
+.sports-settings {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.sports-settings-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.league-region h3 {
+  margin: 0 0 8px;
+  font-size: 13px;
+  font-weight: 650;
+  letter-spacing: -0.005em;
+}
+.league-group legend {
+  color: var(--text);
+}
+.group-check {
+  font-weight: 650;
+  font-size: 13px;
+}
