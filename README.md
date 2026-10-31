@@ -117,7 +117,36 @@ npm test                         # unit tests (parsers, catch-up, search, proxy,
 npm run build && npm run test:e2e   # end-to-end: mock provider + server + Chromium (Playwright)
 ```
 
-The e2e suite runs 19 scenarios: Xtream login, HLS and MPEG-TS live playback, zapping, number zap, guide, reminders, catch-up, movies with resume, MKV auto-remux, series autoplay, search, multi-view, parental lock, server recording, M3U file playlists and the mobile layout. Screenshots are saved to `test-results/`.
+The e2e suite runs 22 scenarios: Xtream login, HLS and MPEG-TS live playback, zapping, number zap, guide, reminders, catch-up, movies with resume, MKV auto-remux, series autoplay, search, multi-view, parental lock, server recording, M3U file playlists, the mobile layout, Sports today, backup-feed failover and guide fixes. Screenshots are saved to `test-results/`.
+
+### Provider diagnostic
+
+To check how ChillyPTV handles a real provider, run:
+
+```bash
+npm run diagnose -- --server http://host:port --user NAME --pass SECRET
+npm run diagnose -- --m3u "https://host/get.php?..."   # M3U playlists
+npm run diagnose                                        # asks for the details
+```
+
+The command logs in with the same parsing and matching code the app uses. It reports:
+
+- account status and playlist size
+- how channel names encode region, quality and language
+- duplicate feeds
+- guide download size and coverage, plus the categories with no guide
+- today's football matches and the channels found for each
+- a one-channel stream check
+- timings for each step
+
+The report is printed and also saved to `chillyptv-diagnose.md`. The username, password, server address and stream links are removed from it.
+
+Options:
+
+- `--epg URL` adds a guide source
+- `--leagues eng.1,esp.1` limits which competitions are checked
+- `--no-stream` skips the stream check
+- `--ua` sets the User-Agent
 
 ## Project layout
 

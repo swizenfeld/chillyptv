@@ -91,9 +91,14 @@ export class XmltvParser {
   push(chunk: string): void {
     this.buf += chunk;
     let cursor = 0;
+    // Remember where the next <channel / <programme is: re-searching for a tag that no longer
+    // appears (channels come first, then thousands of programmes) would rescan the whole
+    // buffer once per element and make a single large push quadratic.
+    let ch = -2;
+    let pr = -2;
     for (;;) {
-      const ch = this.buf.indexOf('<channel', cursor);
-      const pr = this.buf.indexOf('<programme', cursor);
+      if (ch !== -1 && ch < cursor) ch = this.buf.indexOf('<channel', cursor);
+      if (pr !== -1 && pr < cursor) pr = this.buf.indexOf('<programme', cursor);
       let start: number;
       let tag: 'channel' | 'programme';
       if (ch === -1 && pr === -1) break;
