@@ -76,7 +76,7 @@ async function step(name, fn) {
 const tsx = join(root, 'node_modules', '.bin', 'tsx');
 start(tsx, ['mock/server.ts'], { MOCK_PORT: String(MOCK_PORT) });
 const serverEntry = process.env.E2E_USE_SOURCE ? [tsx, ['server/index.ts']] : ['node', ['dist-server/server/index.js']];
-start(serverEntry[0], serverEntry[1], { PORT: String(APP_PORT), CHILLY_DATA_DIR: dataDir, CHILLY_STATIC_DIR: join(root, 'dist') });
+start(serverEntry[0], serverEntry[1], { PORT: String(APP_PORT), CHILLY_DATA_DIR: dataDir, CHILLY_STATIC_DIR: join(root, 'dist'), CHILLY_FIXTURES_BASE: `${MOCK}/espn` });
 await waitFor(`${MOCK}/`);
 await waitFor(`${APP}/api/health`);
 // Give the mock live encoders a few seconds to produce the first segments.
@@ -171,6 +171,21 @@ await step('number zap + previous channel', async () => {
   await page.keyboard.press('Backspace');
   await page.waitForFunction((t) => document.querySelector('.player-title .t1')?.textContent?.trim() === t, first, { timeout: 8000 });
   await page.keyboard.press('Escape');
+});
+
+await step('sports today: fixtures matched to channels', async () => {
+  await page.goto(`${APP}/live?cat=__sports`);
+  await page.locator('.match-card').first().waitFor({ timeout: 30000 });
+  // The live Premier League match is on the two channels whose guide names it, spelled differently.
+  const live = page.locator('.match-card.state-in', { hasText: 'Chelsea' });
+  await live.locator('.match-ch').nth(1).waitFor({ timeout: 30000 });
+  const chans = await live.locator('.match-ch-name').allTextContents();
+  if (chans.length < 2) throw new Error(`expected 2+ channels, got ${chans}`);
+  // A fixture with no listing says so and names the broadcaster.
+  await page.locator('.match-card', { hasText: 'Levante' }).getByText('Not found in your channels').waitFor();
+  await page.screenshot({ path: join(OUT, '04b-sports-today.png') });
+  await live.locator('.match-ch').first().click();
+  await playing('.player-preview video');
 });
 
 await step('MPEG-TS live via mpegts.js', async () => {

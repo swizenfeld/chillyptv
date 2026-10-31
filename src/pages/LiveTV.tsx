@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useVirtualizer } from '@tanstack/react-virtual';
-import { Archive, Bell, BellRing, Clock, Heart, LayoutGrid, List, Maximize2, Play, Search, Star, Tv } from 'lucide-react';
+import { Archive, Bell, BellRing, Clock, Heart, LayoutGrid, List, Maximize2, Play, Search, Star, Trophy, Tv } from 'lucide-react';
 import { useCatalog } from '../store/catalog';
 import { useActiveProfile } from '../store/profiles';
 import { useFavorites, useHistory, useLibrary } from '../store/library';
@@ -9,6 +9,8 @@ import { nowNext, programmesFor, useChannelProgrammes, useEpg } from '../store/e
 import { useSettings, isCategoryLocked, isUnlocked } from '../store/settings';
 import { liveSession, usePlay } from '../hooks/usePlay';
 import { CategoryList } from '../components/CategoryList';
+import { SportsToday } from '../components/SportsToday';
+import { useSportsToday } from '../store/sports';
 import { Empty, Img, ProgressBar, Spinner, useNow } from '../components/ui';
 import { VideoPlayer } from '../player/VideoPlayer';
 import { quickFilter } from '../lib/search';
@@ -55,7 +57,11 @@ export function LiveTVPage() {
   const [params, setParams] = useSearchParams();
   const cat = params.get('cat') ?? '__all';
   const [filter, setFilter] = useState('');
-  const channels = useVisibleChannels(cat, filter);
+  const isSports = cat === '__sports';
+  const listChannels = useVisibleChannels(cat, filter);
+  const sports = useSportsToday();
+  // In "Sports today" the zap/preview order is the channels carrying today's matches.
+  const channels = isSports ? sports.channels : listChannels;
   const favs = useFavorites(profile?.id, 'live');
   const history = useHistory(profile?.id);
   const settings = useSettings();
@@ -117,6 +123,7 @@ export function LiveTVPage() {
         }}
         special={[
           { id: '__all', name: 'All channels', icon: <Tv size={16} />, count: catalog.channels.length },
+          { id: '__sports', name: 'Sports today', icon: <Trophy size={16} />, count: sports.matches.filter((m) => m.state !== 'post').length },
           { id: '__fav', name: 'Favourites', icon: <Star size={16} />, count: favs.length },
           { id: '__recent', name: 'Recently watched', icon: <Clock size={16} />, count: history.filter((h) => h.kind === 'live').length },
           { id: '__archive', name: 'With catch-up', icon: <Archive size={16} />, count: catalog.channels.filter((c) => c.archive).length },
@@ -126,15 +133,23 @@ export function LiveTVPage() {
         <div className="col-head">
           <div className="search-box">
             <Search size={16} />
-            <input value={filter} onChange={(e) => setFilter(e.target.value)} placeholder={`Filter ${channels.length} channels`} aria-label="Filter channels" />
+            <input value={filter} onChange={(e) => setFilter(e.target.value)} placeholder={isSports ? 'Filter teams, leagues or channels' : `Filter ${channels.length} channels`} aria-label="Filter channels" />
           </div>
-          <select className="select" value={settings.channelSort} onChange={(e) => setSettings({ channelSort: e.target.value as typeof settings.channelSort })} aria-label="Sort channels">
+          {!isSports && <select className="select" value={settings.channelSort} onChange={(e) => setSettings({ channelSort: e.target.value as typeof settings.channelSort })} aria-label="Sort channels">
             <option value="default">Provider order</option>
             <option value="number">Number</option>
             <option value="name">A–Z</option>
-          </select>
+          </select>}
         </div>
-        {channels.length === 0 ? (
+        {isSports ? (
+          <SportsToday
+            data={sports}
+            filter={filter}
+            selectedId={selected?.id}
+            onSelect={(ch) => (narrow || !settings.livePreview ? openFull(ch) : setSelectedId(ch.id))}
+            onOpen={openFull}
+          />
+        ) : channels.length === 0 ? (
           <Empty icon={cat === '__fav' ? <Star size={36} /> : <List size={36} />} title={cat === '__fav' ? 'No favourite channels yet' : filter ? `No channels match “${filter}”` : 'No channels here'}>
             {cat === '__fav' && <p>Tap the heart next to a channel to add it.</p>}
           </Empty>

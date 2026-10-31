@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
+import { DEFAULT_LEAGUES } from '../../shared/sports';
 
 export type Theme = 'dark' | 'light' | 'oled';
 export type AspectMode = 'contain' | 'cover' | 'fill' | '16:9' | '4:3';
@@ -34,6 +35,10 @@ export interface Settings {
   preferRemux: boolean;
   channelSort: 'default' | 'name' | 'number';
   movieSort: 'added' | 'name' | 'rating' | 'year';
+  /** ESPN league slugs tracked by Sports today. */
+  sportsLeagues: string[];
+  /** Fetch fixtures online (ESPN) instead of relying on the TV guide only. */
+  sportsOnline: boolean;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -66,6 +71,8 @@ export const DEFAULT_SETTINGS: Settings = {
   preferRemux: false,
   channelSort: 'default',
   movieSort: 'added',
+  sportsLeagues: DEFAULT_LEAGUES,
+  sportsOnline: true,
 };
 
 interface SettingsState extends Settings {

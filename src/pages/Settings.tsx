@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import { del } from 'idb-keyval';
-import { Download, EyeOff, Keyboard, Lock, Palette, PlayCircle, RefreshCw, Shield, Upload, Wifi, CalendarClock, Database, Cloud } from 'lucide-react';
+import { Download, EyeOff, Keyboard, Lock, Palette, PlayCircle, RefreshCw, Shield, Upload, Wifi, CalendarClock, Database, Cloud, Trophy } from 'lucide-react';
+import { LEAGUES, type LeagueGroup } from '../../shared/sports';
 import { useSettings, isAdultName, type AspectMode, type Theme } from '../store/settings';
 import { useCatalog } from '../store/catalog';
 import { useEpg } from '../store/epg';
@@ -153,6 +154,36 @@ export function SettingsPage() {
           }}
           label="Desktop notifications for reminders"
         />
+      </section>
+
+      <section className="card">
+        <h2>
+          <Trophy size={18} /> Sports
+        </h2>
+        <p className="muted">“Sports today” in Live TV lists today's matches for these competitions and the channels in your guide that show them.</p>
+        <Toggle
+          checked={s.sportsOnline}
+          onChange={(sportsOnline) => set({ sportsOnline })}
+          label="Use online fixtures"
+          hint="Kick-off times, live scores and broadcasters from ESPN, via your ChillyPTV server. Off: matches are found from the TV guide only."
+        />
+        <div className="league-groups">
+          {(['MLS', 'Champions', 'England', 'Spain', 'Argentina'] as LeagueGroup[]).map((g) => (
+            <fieldset key={g} className="league-group">
+              <legend>{g}</legend>
+              {LEAGUES.filter((l) => l.group === g).map((l) => (
+                <label key={l.id} className="check">
+                  <input
+                    type="checkbox"
+                    checked={s.sportsLeagues.includes(l.id)}
+                    onChange={(e) => set({ sportsLeagues: e.target.checked ? [...s.sportsLeagues, l.id] : s.sportsLeagues.filter((x) => x !== l.id) })}
+                  />
+                  {l.name}
+                </label>
+              ))}
+            </fieldset>
+          ))}
+        </div>
       </section>
 
       <section className="card">

@@ -25,6 +25,7 @@ It runs as an installable web app (PWA) backed by a small Node server, so it wor
 | **Smart playback engine** | hls.js, mpegts.js, native and server remux behind one player. Falls back automatically (HLS → TS → remux), reconnects live streams with back-off, and has a stall watchdog. |
 | **Plays "unplayable" files** | MKV/AVI and AC3/EAC3/DTS audio are remuxed on the fly by ffmpeg (audio → AAC, optional H.264 transcode). Silent playback (unsupported audio) is detected and fixed automatically. |
 | **Server-side recordings** | Record now, or schedule from the guide. Recordings run on the server (they continue when the browser is closed) and are converted to seekable MP4 for playback or download. |
+| **Sports today** | A Live TV category listing today's football (MLS, Champions League / CONCACAF / Libertadores, Premier League and English cups, LaLiga and Copa del Rey, Liga Profesional and Copa Argentina) with kick-off times, live scores and the channels in *your* guide that show each match. Fixtures come from ESPN's public scoreboards via your server; without it, matches are detected from guide titles. Competitions are chosen in Settings → Sports. |
 | **Multi-View** | Up to 9 channels at once (1, 2, 3, 2×2, 1+3, 3×3) with one-click audio focus. |
 | **Full TV guide grid** | Virtualised EPG grid across days, with a now-line and actions: watch, *start from the beginning*, catch-up, reminders, recordings. |
 | **Search everything** | Fuzzy, typo-tolerant search across channels, movies, series **and the TV guide**, so you can find where a show or match is on. |
@@ -72,6 +73,7 @@ Browsers cannot talk to most IPTV providers directly: providers serve plain `htt
 | `GET /api/epg?url=` | Streams and parses huge XMLTV files server-side, with caching and gzip. The browser receives compact JSON. |
 | `/api/recordings` | Recording scheduler (ffmpeg). |
 | `/api/state/:key` | Small key/value store for cross-device sync. |
+| `GET /api/sports/fixtures?leagues=` | Today's football fixtures, scores and broadcasters (ESPN public scoreboards, cached). |
 
 Without the server (for example as a static site) the app still works for providers that send CORS headers.
 
@@ -86,6 +88,7 @@ Without the server (for example as a static site) the app still works for provid
 | `CHILLY_BLOCK_PRIVATE` | – | `1` blocks proxying to private/LAN addresses |
 | `CHILLY_EPG_TTL_MIN` | `180` | Server EPG cache lifetime |
 | `CHILLY_FFMPEG` | `ffmpeg` | Path to ffmpeg |
+| `CHILLY_FIXTURES_BASE` | ESPN soccer API | Alternative fixtures source (ESPN-compatible), e.g. the mock in tests |
 
 > **Security note:** the proxy will fetch any URL it is given. Don't expose the server to the internet without `CHILLY_PASSWORD` (or a reverse proxy with auth).
 

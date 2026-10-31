@@ -9,6 +9,7 @@ import { RecordingManager, handleRecordings } from './recordings.js';
 import { StateStore, handleState } from './state.js';
 import { serveStatic } from './static.js';
 import { serveEpg } from './epg.js';
+import { handleFixtures } from './sports.js';
 import { ffmpegInfo, sendError, sendJson } from './util.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -63,6 +64,7 @@ async function route(req: IncomingMessage, res: ServerResponse): Promise<void> {
   if (path === '/api/remux') return handleRemux(req, res, url.searchParams);
   if (path === '/api/probe') return handleProbe(req, res, url.searchParams);
   if (path === '/api/epg') return serveEpg(req, res, url.searchParams);
+  if (path === '/api/sports/fixtures') return handleFixtures(req, res, url.searchParams);
   if (path === '/api/recordings' || path.startsWith('/api/recordings/')) return handleRecordings(recordings, req, res, path);
   if (path.startsWith('/api/state/')) return handleState(state, req, res, path);
   if (path.startsWith('/api/')) return sendError(res, 404, 'Unknown API route');

@@ -115,6 +115,26 @@ const live: LiveCh[] = [];
     }
   });
 }
+// ---------------------------------------------------------------- sports ---
+// Today's mock fixtures, anchored to server start so some are live, some upcoming
+// and one finished. Each lists the guide title real providers might use.
+interface MockFixture { id: number; league: string; home: string; away: string; offsetMin: number; broadcasts: string[]; guide?: { ch: number; title: string }[] }
+const SPORTS_ANCHOR = Math.floor(Date.now() / (30 * 60_000)) * 30 * 60_000;
+const sportsChannels = live.filter((c) => c.cat === 2);
+sportsChannels[5].name = 'AR: TNT Sports HD';
+sportsChannels[8].name = 'UK: Sky Sports Main Event';
+const FIXTURES: MockFixture[] = [
+  { id: 701, league: 'eng.1', home: 'Chelsea', away: 'Manchester United', offsetMin: -40, broadcasts: ['TNT Sports'], guide: [{ ch: 0, title: 'Premier League: Chelsea v Man Utd' }, { ch: 2, title: 'Live: Chelsea vs Manchester United' }] },
+  { id: 702, league: 'eng.1', home: 'Tottenham Hotspur', away: 'Crystal Palace', offsetMin: 90, broadcasts: ['Sky Sports'], guide: [{ ch: 1, title: 'Premier League: Spurs v Palace' }] },
+  { id: 703, league: 'esp.1', home: 'Barcelona', away: 'Deportivo Alavés', offsetMin: 150, broadcasts: ['ESPN+'], guide: [{ ch: 3, title: 'LALIGA EA SPORTS - FC Barcelona vs Alavés' }] },
+  { id: 704, league: 'arg.1', home: 'Vélez Sarsfield', away: 'San Lorenzo', offsetMin: 60, broadcasts: ['TNT Sports'], guide: [{ ch: 4, title: 'Liga Profesional: Vélez vs San Lorenzo' }] },
+  { id: 705, league: 'usa.1', home: 'Inter Miami CF', away: 'LA Galaxy', offsetMin: 240, broadcasts: ['Apple TV'], guide: [{ ch: 6, title: 'MLS: Inter Miami vs LA Galaxy' }] },
+  { id: 706, league: 'uefa.champions', home: 'Bayern Munich', away: 'Paris Saint-Germain', offsetMin: -300, broadcasts: ['Paramount+'], guide: [{ ch: 7, title: 'UEFA Champions League: Bayern München - PSG' }] },
+  { id: 707, league: 'eng.1', home: 'Aston Villa', away: 'Fulham', offsetMin: 330, broadcasts: ['Sky Sports'] },
+  { id: 708, league: 'esp.1', home: 'Levante', away: 'Atlético Madrid', offsetMin: 30, broadcasts: ['ESPN+'] },
+];
+const fixtureStart = (f: MockFixture) => SPORTS_ANCHOR + f.offsetMin * 60_000;
+
 const movies = Array.from({ length: 60 }, (_, i) => ({
   id: 5000 + i,
   name: `${['The', 'Return of the', 'Last', 'Secret', 'Midnight'][i % 5]} ${WORDS[i % WORDS.length]} ${['Protocol', 'Odyssey', 'Heist', 'Garden', 'Signal', 'Run'][i % 6]} (${2000 + (i % 25)})`,
@@ -142,7 +162,43 @@ function epgFor(ch: LiveCh, from: number, to: number) {
     out.push({ start: t, end: t + len, title, desc: `${title} on ${ch.name}. Episode ${1 + Math.floor(r() * 120)} — a mock programme description for testing.` });
     t += len;
   }
-  return out;
+  // Football on the sports channels replaces whatever the slot generator put there.
+  const idx = sportsChannels.indexOf(ch);
+  if (idx < 0) return out;
+  const matches = FIXTURES.flatMap((f) => (f.guide ?? []).filter((g) => g.ch === idx).map((g) => ({ f, g })));
+  if (!matches.length) return out;
+  let list = out;
+  for (const { f, g } of matches) {
+    const start = fixtureStart(f) - 15 * 60_000;
+    const end = fixtureStart(f) + 120 * 60_000;
+    if (end < from || start > to) continue;
+    list = list.filter((p) => p.end <= start || p.start >= end);
+    list.push({ start, end, title: g.title, desc: `Live coverage of ${f.home} v ${f.away}.` });
+  }
+  return list.sort((a, b) => a.start - b.start);
+}
+
+/** ESPN-shaped scoreboard for one league (only what ChillyPTV reads). */
+function scoreboard(req: IncomingMessage, league: string) {
+  const now = Date.now();
+  const events = FIXTURES.filter((f) => f.league === league).map((f) => {
+    const start = fixtureStart(f);
+    const mins = Math.floor((now - start) / 60_000);
+    const state = mins < 0 ? 'pre' : mins < 115 ? 'in' : 'post';
+    const score = (seed: number) => (state === 'pre' ? '0' : String(seed % 4));
+    const team = (name: string, homeAway: string, seed: number) => ({
+      homeAway,
+      score: score(seed),
+      team: { displayName: name, shortDisplayName: name.replace(/ (CF|FC)$/, ''), abbreviation: name.slice(0, 3).toUpperCase(), logo: `${base(req)}/crest/${encodeURIComponent(name)}.svg` },
+    });
+    return {
+      id: String(f.id),
+      date: new Date(start).toISOString(),
+      status: { displayClock: `${Math.min(90, Math.max(0, mins))}'`, type: { state, completed: state === 'post', shortDetail: state === 'post' ? 'FT' : state === 'pre' ? new Date(start).toISOString() : `${mins}'` } },
+      competitions: [{ competitors: [team(f.home, 'home', f.id), team(f.away, 'away', f.id + 1)], venue: { fullName: `${f.home} Stadium` }, broadcasts: [{ market: 'national', names: f.broadcasts }] }],
+    };
+  });
+  return { leagues: [{ name: league }], events };
 }
 
 const b64 = (s: string) => Buffer.from(s, 'utf8').toString('base64');
@@ -366,6 +422,10 @@ const server = createServer((req, res) => {
     if (!ch) return res.writeHead(404).end();
     return liveStreamTs(res, ch.src, { realtime: false, seconds: Math.min(+m[1] * 60, 300) });
   }
+  m = p.match(/^\/espn\/([a-z0-9._]+)\/scoreboard$/);
+  if (m) return json(res, scoreboard(req, m[1]));
+  m = p.match(/^\/crest\/(.+)\.svg$/);
+  if (m) return svg(res, decodeURIComponent(m[1]), (decodeURIComponent(m[1]).length * 53) % 360, 120, 120);
   if (p === '/') {
     res.writeHead(200, { 'Content-Type': 'text/plain' });
     return res.end(`ChillyPTV mock provider\n\nXtream: server ${base(req)}  user ${USER}  pass ${PASS}\nM3U:    ${base(req)}/get.php?username=${USER}&password=${PASS}&type=m3u_plus&output=m3u8\nEPG:    ${base(req)}/xmltv.php?username=${USER}&password=${PASS}\n`);

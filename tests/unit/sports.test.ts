@@ -1,0 +1,105 @@
+import { describe, expect, it } from 'vitest';
+import { broadcasterScore, detectGuideFixture, fixtureKey, parseEspnScoreboard, programmeScore, teamNames, type Fixture } from '../../shared/sports';
+
+const KO = Date.UTC(2026, 9, 31, 12, 30);
+const fx = (home: string, away: string, leagueId = 'eng.1', patch: Partial<Fixture> = {}): Fixture => ({
+  id: 'x', leagueId, leagueName: 'Premier League', start: KO, state: 'pre', home: { name: home }, away: { name: away }, broadcasts: [], source: 'feed', ...patch,
+});
+const prog = (title: string, offsetMin = -15, lenMin = 135, desc?: string) => ({ start: KO + offsetMin * 60_000, end: KO + (offsetMin + lenMin) * 60_000, title, desc });
+
+describe('team names', () => {
+  it('include nicknames guides use', () => {
+    expect(teamNames({ name: 'Manchester United' })).toEqual(expect.arrayContaining(['manchester united', 'man utd']));
+    expect(teamNames({ name: 'Tottenham Hotspur' })).toEqual(expect.arrayContaining(['spurs', 'tottenham']));
+    expect(teamNames({ name: 'Vélez Sarsfield' })).toEqual(expect.arrayContaining(['velez sarsfield', 'velez', 'sarsfield']));
+    expect(teamNames({ name: 'Paris Saint-Germain' })).toContain('psg');
+  });
+  it('never reduce a club to an ambiguous single word', () => {
+    expect(teamNames({ name: 'Real Madrid' })).not.toContain('madrid');
+    expect(teamNames({ name: 'Real Madrid' })).not.toContain('real');
+    expect(teamNames({ name: 'Manchester City' })).not.toContain('manchester');
+  });
+});
+
+describe('programme ↔ fixture scoring', () => {
+  const f = fx('Chelsea', 'Manchester United');
+  it('both teams named → certain, whatever the spelling', () => {
+    expect(programmeScore(prog('Premier League: Chelsea v Man Utd'), f)).toBe(1);
+    expect(programmeScore(prog('Live: Chelsea vs Manchester United'), f)).toBe(1);
+  });
+  it('one team plus the competition → likely', () => {
+    expect(programmeScore(prog('Premier League Live', -15, 135, 'Chelsea host the visitors at Stamford Bridge.'), f)).toBe(0.6);
+  });
+  it('one team without the competition, or the wrong time → no match', () => {
+    expect(programmeScore(prog('Chelsea: The Documentary'), f)).toBe(0);
+    expect(programmeScore(prog('Premier League: Chelsea v Man Utd', 300, 120), f)).toBe(0);
+  });
+  it('does not confuse Real Madrid with Atlético Madrid', () => {
+    expect(programmeScore(prog('LaLiga: Atlético Madrid vs Sevilla'), fx('Real Madrid', 'Sevilla', 'esp.1'))).toBe(0);
+    expect(programmeScore(prog('LaLiga: Real Madrid vs Sevilla'), fx('Real Madrid', 'Sevilla', 'esp.1'))).toBe(1);
+  });
+});
+
+describe('broadcaster channels', () => {
+  it('matches channel names to listed broadcasters, ignoring country prefixes', () => {
+    const f = fx('Vélez Sarsfield', 'San Lorenzo', 'arg.1', { broadcasts: ['TNT Sports'] });
+    expect(broadcasterScore('AR: TNT Sports HD', f)).toBe(0.35);
+    expect(broadcasterScore('TNT Comedy', f)).toBe(0);
+  });
+});
+
+describe('guide-only detection', () => {
+  const leagues = ['eng.1', 'esp.1', 'arg.1', 'usa.1', 'uefa.champions'];
+  it.each([
+    ['Premier League: Chelsea v Man Utd', 'eng.1', 'Chelsea', 'Man Utd'],
+    ['LALIGA EA SPORTS - FC Barcelona vs Alavés', 'esp.1', 'FC Barcelona', 'Alaves'],
+    ['Liga Profesional: Vélez vs San Lorenzo', 'arg.1', 'Vélez', 'San Lorenzo'],
+    ['UEFA Champions League: Bayern München - PSG', 'uefa.champions', 'Bayern München', 'PSG'],
+    ['MLS: Inter Miami vs LA Galaxy', 'usa.1', 'Inter Miami', 'LA Galaxy'],
+  ])('%s', (title, league, home, away) => {
+    const f = detectGuideFixture(prog(title), leagues)!;
+    expect(f).not.toBeNull();
+    expect(f.leagueId).toBe(league);
+    expect(f.home.name).toBe(home);
+    expect(f.away.name).toBe(away);
+  });
+  it('ignores shows that are not matches or not tracked', () => {
+    expect(detectGuideFixture(prog('Premier League Highlights'), leagues)).toBeNull();
+    expect(detectGuideFixture(prog('Serie A: Inter v Milan'), leagues)).toBeNull();
+  });
+  it('the same match on two channels collapses to one key', () => {
+    const a = detectGuideFixture(prog('Premier League: Chelsea v Man Utd'), leagues)!;
+    const b = detectGuideFixture(prog('Premier League: Man Utd v Chelsea'), leagues)!;
+    expect(fixtureKey(a)).toBe(fixtureKey(b));
+  });
+});
+
+describe('ESPN scoreboard parsing', () => {
+  it('normalises events, scores, state and broadcasters', () => {
+    const json = {
+      events: [
+        {
+          id: '1',
+          date: '2026-10-31T12:30Z',
+          status: { displayClock: "67'", type: { state: 'in', shortDetail: "67'" } },
+          competitions: [
+            {
+              competitors: [
+                { homeAway: 'home', score: '2', team: { displayName: 'Chelsea', abbreviation: 'CHE', logo: 'c.png' } },
+                { homeAway: 'away', score: '1', team: { displayName: 'Manchester United', shortDisplayName: 'Man United' } },
+              ],
+              broadcasts: [{ names: ['TNT Sports', 'Peacock'] }],
+              venue: { fullName: 'Stamford Bridge' },
+            },
+          ],
+        },
+        { id: '2', date: 'nonsense', competitions: [] },
+      ],
+    };
+    const [f, ...rest] = parseEspnScoreboard(json, 'eng.1');
+    expect(rest).toHaveLength(0);
+    expect(f).toMatchObject({ id: 'espn:1', leagueName: 'Premier League', state: 'in', detail: "67'", venue: 'Stamford Bridge', broadcasts: ['TNT Sports', 'Peacock'], start: Date.UTC(2026, 9, 31, 12, 30) });
+    expect(f.home).toMatchObject({ name: 'Chelsea', score: '2', logo: 'c.png' });
+    expect(f.away).toMatchObject({ name: 'Manchester United', short: 'Man United', score: '1' });
+  });
+});
