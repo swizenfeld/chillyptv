@@ -159,10 +159,17 @@ await step('number zap + previous channel', async () => {
   await page.locator('.channel-row').first().dblclick();
   await page.waitForURL(/\/play/);
   await playing('.player-full video');
+  const first = (await page.locator('.player-title .t1').textContent()).trim();
+  // Type at human speed: the player re-renders between keystrokes, and digits must survive it.
   await page.keyboard.press('1');
-  await page.keyboard.press('2');
   await page.locator('.zap-digits').waitFor();
-  await page.waitForFunction(() => /12/.test(document.querySelector('.live-banner .ch-num')?.textContent ?? ''), null, { timeout: 8000 });
+  await page.waitForTimeout(700);
+  await page.keyboard.press('2');
+  await page.waitForFunction(() => /\b12\b/.test(document.querySelector('.player-title .t1')?.textContent ?? ''), null, { timeout: 8000 });
+  await playing('.player-full video');
+  // Backspace returns to the channel we came from.
+  await page.keyboard.press('Backspace');
+  await page.waitForFunction((t) => document.querySelector('.player-title .t1')?.textContent?.trim() === t, first, { timeout: 8000 });
   await page.keyboard.press('Escape');
 });
 

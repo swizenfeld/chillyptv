@@ -287,10 +287,16 @@ export function VideoPlayer(props: VideoPlayerProps) {
   };
 
   // ------------------------------------------------------------ keyboard
+  // Number-zap state lives in refs: the key handler below is re-subscribed on
+  // re-renders, and digits typed across one must not be lost or cancelled.
+  const zapBuffer = useRef('');
+  const zapTimer = useRef<number | undefined>(undefined);
+  const onZapToRef = useRef(props.onZapTo);
+  onZapToRef.current = props.onZapTo;
+  useEffect(() => () => window.clearTimeout(zapTimer.current), []);
+
   useEffect(() => {
     if (!full) return;
-    let digitTimer: number | undefined;
-    let buffer = '';
     const onKey = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement;
       if (target.closest('input, textarea, select, [contenteditable]')) return;
@@ -386,23 +392,20 @@ export function VideoPlayer(props: VideoPlayerProps) {
           break;
         default:
           if (/^\d$/.test(e.key) && req.kind === 'live' && props.onZapTo) {
-            buffer = (buffer + e.key).slice(-4);
-            setDigits(buffer);
-            window.clearTimeout(digitTimer);
-            digitTimer = window.setTimeout(() => {
-              const n = Number(buffer);
-              buffer = '';
+            zapBuffer.current = (zapBuffer.current + e.key).slice(-4);
+            setDigits(zapBuffer.current);
+            window.clearTimeout(zapTimer.current);
+            zapTimer.current = window.setTimeout(() => {
+              const n = Number(zapBuffer.current);
+              zapBuffer.current = '';
               setDigits('');
-              if (n) props.onZapTo?.(n);
+              if (n) onZapToRef.current?.(n);
             }, 1400);
           }
       }
     };
     window.addEventListener('keydown', onKey);
-    return () => {
-      window.removeEventListener('keydown', onKey);
-      window.clearTimeout(digitTimer);
-    };
+    return () => window.removeEventListener('keydown', onKey);
   }, [full, togglePlay, toggleFullscreen, togglePip, poke, props, req.kind, session.next, menu]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Show the channel banner briefly when zapping.
