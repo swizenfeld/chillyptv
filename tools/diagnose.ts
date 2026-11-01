@@ -9,10 +9,12 @@
  * playlist, the TV guide, channel naming, today's football and timings. The report never
  * contains the username, password, server address or any stream URL.
  *
- * Options: --epg URL (extra XMLTV source)  --ua "User-Agent"  --languages es,en  --no-stream (skip the
+ * Options: --movies N / --episodes N (files checked for audio and subtitle tracks; --no-media skips)
+ *          --epg URL (extra XMLTV source)  --ua "User-Agent"  --languages es,en  --no-stream (skip the
  * one-channel stream check)  --out FILE  --leagues eng.1,esp.1,...
  */
 import { writeFileSync } from 'node:fs';
+import { spawn, spawnSync } from 'node:child_process';
 import { createInterface } from 'node:readline/promises';
 import { stdin, stdout } from 'node:process';
 import { XmltvParser, type EpgData } from '../shared/xmltv';
@@ -25,6 +27,7 @@ import {
 import { normalize } from '../src/lib/search';
 import { trimGuide } from '../shared/guide';
 import { eventListing } from '../shared/events';
+import { ffprobeArgs, languageName, parseProbe, type MediaProbe } from '../shared/media';
 
 // ------------------------------------------------------------------ options
 const argv = process.argv.slice(2);
@@ -144,13 +147,18 @@ async function main() {
   let channels: Ch[] = [];
   let vodCount = 0;
   let seriesCount = 0;
+  let vodItems: Record<string, unknown>[] = [];
+  let seriesItems: Record<string, unknown>[] = [];
+  let vodCatName = new Map<string, string>();
+  let api: ((q?: Record<string, string>) => string) | null = null;
   let epgUrls: string[] = [];
   let timezone: string | undefined;
 
   if (!m3u) {
-    const api = (q: Record<string, string> = {}) => `${base}/player_api.php?${new URLSearchParams({ username: user!, password: pass!, ...q })}`;
+    const xapi = (q: Record<string, string> = {}) => `${base}/player_api.php?${new URLSearchParams({ username: user!, password: pass!, ...q })}`;
+    api = xapi;
     out('## Account');
-    const acct = await timed('Login (player_api)', () => getText(api(), 20_000)).catch((e) => {
+    const acct = await timed('Login (player_api)', () => getText(xapi(), 20_000)).catch((e) => {
       throw new Error(`Login request failed: ${why(e)}`);
     });
     let info: { user_info?: Record<string, unknown>; server_info?: Record<string, unknown> };
@@ -174,7 +182,7 @@ async function main() {
     ]);
 
     const get = async (action: string) => {
-      const r = await timed(action, () => getText(api({ action }), 120_000));
+      const r = await timed(action, () => getText(xapi({ action }), 120_000));
       try {
         return { list: JSON.parse(r.text) as Record<string, unknown>[], bytes: r.bytes, ms: r.ms };
       } catch {
@@ -190,6 +198,8 @@ async function main() {
     });
     vodCount = Array.isArray(vod.list) ? vod.list.length : 0;
     seriesCount = Array.isArray(series.list) ? series.list.length : 0;
+    vodItems = Array.isArray(vod.list) ? vod.list : [];
+    seriesItems = Array.isArray(series.list) ? series.list : [];
     epgUrls = [`${base}/xmltv.php?${new URLSearchParams({ username: user!, password: pass! })}`];
     out('## Playlist');
     table(['', 'Count', 'Download', 'Time'], [
@@ -442,6 +452,123 @@ async function main() {
   out(`Sample football-looking guide titles (${sportsTitles.length} today):`);
   for (const t of [...new Set(sportsTitles)].slice(0, 15)) out(`- \`${t}\``);
   out();
+
+  // ---------------------------------------------------------------- movies & episodes: tracks
+  if (!flag('no-media') && !m3u && api && (vodItems.length || seriesItems.length)) {
+    out('## Movies and episodes: languages and subtitles');
+    const ffprobe = process.env.CHILLY_FFPROBE ?? 'ffprobe';
+    const hasProbe = spawnSync(ffprobe, ['-version'], { stdio: 'ignore' }).status === 0;
+    const wantMovies = Number(opt('movies') ?? 24);
+    const wantEpisodes = Number(opt('episodes') ?? 8);
+    // Spread the sample across categories (newest first in each), like browsing would.
+    const spread = <T,>(items: T[], cat: (x: T) => string, added: (x: T) => number, n: number): T[] => {
+      const by = new Map<string, T[]>();
+      for (const x of [...items].sort((a, b) => added(b) - added(a))) (by.get(cat(x)) ?? by.set(cat(x), []).get(cat(x))!).push(x);
+      const lists = [...by.values()];
+      const outList: T[] = [];
+      for (let round = 0; outList.length < n && lists.some((l) => l.length > round); round++) for (const l of lists) if (l[round] && outList.length < n) outList.push(l[round]);
+      return outList;
+    };
+    const catsRes = await getText(api({ action: 'get_vod_categories' }), 30_000).catch(() => null);
+    try {
+      vodCatName = new Map((JSON.parse(catsRes?.text ?? '[]') as Record<string, unknown>[]).map((c) => [String(c.category_id), String(c.category_name ?? '')]));
+    } catch {
+      /* ignore */
+    }
+    type Item = { kind: 'movie' | 'episode'; title: string; category: string; url: string; info?: Record<string, unknown> };
+    const items: Item[] = spread(vodItems, (m) => String(m.category_id), (m) => Number(m.added) || 0, wantMovies).map((m) => ({
+      kind: 'movie',
+      title: String(m.name ?? ''),
+      category: vodCatName.get(String(m.category_id)) ?? '',
+      url: `${base}/movie/${encodeURIComponent(user!)}/${encodeURIComponent(pass!)}/${m.stream_id}.${m.container_extension || 'mp4'}`,
+      info: m,
+    }));
+    for (const s of spread(seriesItems, (x) => String(x.category_id), (x) => Number(x.last_modified) || 0, wantEpisodes)) {
+      try {
+        const r = await getText(api({ action: 'get_series_info', series_id: String(s.series_id) }), 30_000);
+        const eps = (JSON.parse(r.text) as { episodes?: Record<string, Record<string, unknown>[]> }).episodes ?? {};
+        const first = Object.values(eps).flat()[0];
+        if (first) items.push({ kind: 'episode', title: `${s.name} · ${first.title ?? ''}`, category: '', url: `${base}/series/${encodeURIComponent(user!)}/${encodeURIComponent(pass!)}/${first.id}.${first.container_extension || 'mp4'}` });
+      } catch {
+        /* skip */
+      }
+    }
+    const probeOne = (url: string) =>
+      new Promise<MediaProbe | string>((resolve) => {
+        const child = spawn(ffprobe, ffprobeArgs(url, UA, 'http,https,tcp,tls,crypto,httpproxy'), { stdio: ['ignore', 'pipe', 'pipe'] });
+        let o = '';
+        let err = '';
+        child.stdout.on('data', (d: Buffer) => (o += d));
+        child.stderr.on('data', (d: Buffer) => (err += d));
+        const timer = setTimeout(() => child.kill('SIGKILL'), 30_000);
+        child.on('error', (e) => resolve(e.message));
+        child.on('close', () => {
+          clearTimeout(timer);
+          try {
+            resolve(parseProbe(JSON.parse(o)));
+          } catch {
+            resolve(err.trim().split('\n').pop() || 'no answer within 30 s');
+          }
+        });
+      });
+    const results: { it: Item; p: MediaProbe | string }[] = [];
+    if (hasProbe) {
+      out(`Checked ${items.length} files with ffprobe, one at a time (your plan allows one connection, so nothing else should be playing). Each check reads only the start of the file.`);
+      await timed(`Track check (${items.length} files)`, async () => {
+        for (const it of items) results.push({ it, p: await probeOne(it.url) });
+      });
+    } else {
+      out('ffprobe is not installed, so only what the provider reports about each movie (usually just the first audio track) is shown. Install ffmpeg (macOS: `brew install ffmpeg`) and run again for the full picture.');
+      for (const it of items.filter((x) => x.kind === 'movie')) {
+        try {
+          const r = await getText(api({ action: 'get_vod_info', vod_id: String(it.info?.stream_id) }), 30_000);
+          const info = (JSON.parse(r.text) as { info?: { audio?: { codec_name?: string; channels?: number; tags?: { language?: string } }; video?: { codec_name?: string; width?: number; height?: number } } }).info ?? {};
+          results.push({ it, p: { duration: null, ...(info.video ? { video: { codec: info.video.codec_name ?? '?', width: info.video.width, height: info.video.height } } : {}), audio: info.audio ? [{ index: 0, codec: info.audio.codec_name ?? '?', channels: info.audio.channels, lang: info.audio.tags?.language }] : [], subtitles: [] } });
+        } catch (e) {
+          results.push({ it, p: why(e) });
+        }
+      }
+    }
+    out();
+    const ok = results.filter((r): r is { it: Item; p: MediaProbe } => typeof r.p !== 'string');
+    const failed = results.filter((r) => typeof r.p === 'string');
+    const count = (f: (p: MediaProbe) => boolean) => ok.filter((r) => f(r.p)).length;
+    const langs = (pick: (p: MediaProbe) => (string | undefined)[]) => {
+      const m = new Map<string, number>();
+      for (const r of ok) for (const l of new Set(pick(r.p))) m.set(languageName(l) ?? 'untagged', (m.get(languageName(l) ?? 'untagged') ?? 0) + 1);
+      return [...m.entries()].sort((a, b) => b[1] - a[1]).map(([l, n]) => `${l} ${n}`).join(', ') || '–';
+    };
+    const browserAudio = new Set(['aac', 'mp3', 'opus', 'vorbis', 'flac']);
+    const box = (c?: string) => (!c ? '?' : /mp4|mov/.test(c) ? 'mp4' : /matroska|webm/.test(c) ? 'mkv' : c.split(',')[0]);
+    table(['', 'Files', 'Share'], [
+      ['Checked', `${ok.length} of ${results.length}`, pct(ok.length, results.length)],
+      ['More than one audio track', count((p) => p.audio.length > 1), pct(count((p) => p.audio.length > 1), ok.length)],
+      ['Built-in subtitles (any)', count((p) => p.subtitles.length > 0), pct(count((p) => p.subtitles.length > 0), ok.length)],
+      ['…text subtitles the app can show', count((p) => p.subtitles.some((x) => x.text)), pct(count((p) => p.subtitles.some((x) => x.text)), ok.length)],
+      ['…picture subtitles only (PGS/VobSub)', count((p) => p.subtitles.length > 0 && !p.subtitles.some((x) => x.text)), pct(count((p) => p.subtitles.length > 0 && !p.subtitles.some((x) => x.text)), ok.length)],
+      ['Audio browsers can\'t play (AC3/EAC3/DTS…)', count((p) => p.audio.length > 0 && !browserAudio.has(p.audio[0].codec)), pct(count((p) => p.audio.length > 0 && !browserAudio.has(p.audio[0].codec)), ok.length)],
+    ]);
+    out(`Containers: ${top(ok, (r) => box(r.p.container)).map(([k, v]) => `${k} ${v}`).join(', ') || '–'}`);
+    out(`Audio languages: ${langs((p) => p.audio.map((a) => a.lang))}`);
+    out(`Subtitle languages: ${langs((p) => p.subtitles.map((x) => x.lang))}`);
+    out();
+    table(
+      ['Title', 'Category', 'File', 'Audio', 'Subtitles'],
+      results.map(({ it, p }) =>
+        typeof p === 'string'
+          ? [it.title.slice(0, 60), it.category, '–', `failed: ${p.slice(0, 80)}`, '']
+          : [
+              it.title.slice(0, 60),
+              it.category,
+              `${box(p.container)} ${p.video ? `${p.video.codec} ${p.video.height ?? ''}p` : ''}`.trim(),
+              p.audio.map((a) => `${a.lang ?? '?'} ${a.codec}${a.channels ? ` ${a.channels}ch` : ''}`).join(', ') || 'none',
+              p.subtitles.map((x) => `${x.lang ?? '?'} ${x.codec}${x.forced ? ' forced' : ''}`).join(', ') || 'none',
+            ],
+      ),
+    );
+    if (failed.length) out(`${failed.length} file(s) could not be read; see the table.`);
+    out();
+  }
 
   // ---------------------------------------------------------------- one stream
   if (!flag('no-stream') && !m3u && channels.length) {

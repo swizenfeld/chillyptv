@@ -169,9 +169,11 @@ export const useEpg = create<EpgState>()((set, get) => ({
       }
       if (get().profileId !== profile.id || gen !== loadGeneration) return;
       if (!merged) throw new Error(sources.find((x) => x.error)?.error ?? 'EPG unavailable');
+      // Resolver and data must change together: a render in between would resolve against the
+      // new guide's keys but read the old guide's listings, and cache an empty list.
       buildResolver(merged);
-      await idbSet(`epg:${profile.id}`, merged).catch(() => {});
       set({ data: merged, status: 'ready', error: null, sources, version: get().version + 1 });
+      await idbSet(`epg:${profile.id}`, merged).catch(() => {});
     } catch (e) {
       if (get().profileId !== profile.id || gen !== loadGeneration) return;
       set({ status: current ? 'ready' : 'error', error: (e as Error).message });

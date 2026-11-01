@@ -292,6 +292,52 @@ await step('guide trimmed to the playlist; event channels listed from their name
   await page.screenshot({ path: join(OUT, '07c-event-listing.png') });
 });
 
+await step('movie tracks: other language version, audio switch, subtitles', async () => {
+  // Babel Nights has English + Spanish audio and English + Spanish subtitles; a Spanish copy sits in |LAT| ESTRENOS.
+  await page.goto(`${APP}/movies/5005`);
+  await page.locator('.other-versions .version-chip', { hasText: 'Spanish' }).waitFor();
+  await page.screenshot({ path: join(OUT, '08b-other-versions.png') });
+  await page.locator('.other-versions .version-chip', { hasText: 'Spanish' }).click();
+  await page.waitForURL(/\/movies\/5006$/);
+  await page.goBack();
+  await page.waitForURL(/\/movies\/5005$/);
+  await page.getByRole('button', { name: /^Play$/ }).click();
+  await page.waitForURL(/\/play/);
+  await playing('.player-full video');
+  const player = page.locator('.player-full');
+  await player.hover();
+  // Audio: both file tracks are offered; picking Spanish restarts through the server at the same spot.
+  await player.getByRole('button', { name: 'Audio track' }).click();
+  await page.getByRole('menuitemradio', { name: /Spanish/ }).click();
+  await page.waitForFunction(() => document.querySelector('.player')?.getAttribute('data-engine') === 'remux', null, { timeout: 30000 });
+  await playing('.player-full video');
+  // Subtitles: cues come from the same server stream and match the position in the film.
+  await player.hover();
+  let sid = null;
+  const onReq = (r) => {
+    const m = r.url().match(/\/api\/remux\?.*\bsid=([\w-]+)/);
+    if (m) sid = m[1];
+  };
+  page.on('request', onReq);
+  await player.getByRole('button', { name: 'Subtitles' }).click();
+  await page.getByRole('menuitemradio', { name: /English/ }).click();
+  const cue = await page.waitForFunction(() => {
+    const v = document.querySelector('.player-full video');
+    const t = [...(v?.textTracks ?? [])].find((x) => x.mode === 'showing');
+    const c = t?.activeCues?.[0];
+    return c ? { text: c.text, now: v.currentTime } : null;
+  }, null, { timeout: 30000 });
+  page.off('request', onReq);
+  const { text, now } = await cue.jsonValue();
+  // The cue must be the one for this moment in the film: line n runs from (n-1)*5 s to (n-1)*5+4 s.
+  const { base } = await (await fetch(`${APP}/api/remux/subs?sid=${sid}&from=0`)).json();
+  const line = Number(text.match(/^English subtitle line (\d+)$/)?.[1]);
+  const at = base + now;
+  if (!line || at < (line - 1) * 5 - 0.3 || at > (line - 1) * 5 + 4.3) throw new Error(`cue "${text}" shown at film time ${at.toFixed(2)} s`);
+  await page.screenshot({ path: join(OUT, '08c-subtitles.png') });
+  await page.keyboard.press('Escape');
+});
+
 await step('MPEG-TS live via mpegts.js', async () => {
   await page.evaluate(async () => {
     const raw = JSON.parse(localStorage.getItem('chilly.profiles'));

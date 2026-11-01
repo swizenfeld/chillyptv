@@ -9,7 +9,7 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { gzipSync } from 'node:zlib';
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
-import { createReadStream, existsSync, mkdirSync, statSync } from 'node:fs';
+import { createReadStream, existsSync, mkdirSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -60,6 +60,24 @@ function ensureMedia(): void {
     ff(['-f', 'lavfi', '-i', 'smptehdbars=size=854x480:rate=25', '-f', 'lavfi', '-i', 'sine=frequency=300:sample_rate=48000', '-t', '60',
       '-vf', `format=yuv420p${text('MKV AC3')}`, '-c:v', 'libx264', '-preset', 'veryfast', '-c:a', 'ac3', '-shortest', mkv]);
   }
+  // Two audio languages and two text subtitle tracks, as multi-language releases ship them.
+  const multi = join(MEDIA, 'movie-multi.mkv');
+  if (!existsSync(multi)) {
+    console.log('[mock] generating movie-multi.mkv (English + Spanish audio, English + Spanish subtitles)');
+    const srt = (lines: (i: number) => string) =>
+      Array.from({ length: 24 }, (_, i) => {
+        const t = (sec: number) => `00:${String(Math.floor(sec / 60)).padStart(2, '0')}:${String(sec % 60).padStart(2, '0')},000`;
+        return `${i + 1}\n${t(i * 5)} --> ${t(i * 5 + 4)}\n${lines(i + 1)}\n`;
+      }).join('\n');
+    writeFileSync(join(MEDIA, 'subs-en.srt'), srt((n) => `English subtitle line ${n}`));
+    writeFileSync(join(MEDIA, 'subs-es.srt'), srt((n) => `Subtítulo en español ${n}`));
+    ff(['-f', 'lavfi', '-i', 'testsrc=size=854x480:rate=25', '-f', 'lavfi', '-i', 'sine=frequency=520:sample_rate=48000', '-f', 'lavfi', '-i', 'sine=frequency=330:sample_rate=48000',
+      '-i', join(MEDIA, 'subs-en.srt'), '-i', join(MEDIA, 'subs-es.srt'), '-t', '120',
+      '-map', '0:v', '-map', '1:a', '-map', '2:a', '-map', '3:s', '-map', '4:s',
+      '-vf', `format=yuv420p${text('MULTI LANGUAGE')}`, '-c:v', 'libx264', '-preset', 'veryfast', '-g', '50', '-c:a', 'aac', '-b:a', '96k', '-c:s', 'srt',
+      '-metadata:s:a:0', 'language=eng', '-metadata:s:a:1', 'language=spa', '-metadata:s:a:1', 'title=Español Latino',
+      '-metadata:s:s:0', 'language=eng', '-metadata:s:s:1', 'language=spa', multi]);
+  }
   const ep = join(MEDIA, 'episode.mp4');
   if (!existsSync(ep)) {
     console.log('[mock] generating episode.mp4');
@@ -86,7 +104,7 @@ process.on('SIGTERM', () => process.exit(0));
 
 // ----------------------------------------------------------------- data ----
 const LIVE_CATS = ['News', 'Sports', 'Movies 24/7', 'Kids', 'Documentary', 'Music', 'UK | Entertainment', 'US | Local', 'Adult XXX'];
-const VOD_CATS = ['Action', 'Comedy', 'Drama', 'Sci-Fi', 'Family', '|EN| NEW RELEASED'];
+const VOD_CATS = ['Action', 'Comedy', 'Drama', 'Sci-Fi', 'Family', '|EN| NEW RELEASED', '|LAT| ESTRENOS'];
 const SERIES_CATS = ['Crime Drama', 'Sitcoms', 'Anime'];
 const WORDS = ['Global', 'Prime', 'Star', 'Nova', 'Metro', 'Pulse', 'Vista', 'Arena', 'Echo', 'Zen', 'Orbit', 'Peak', 'Wave', 'Blue', 'Fox', 'Sky'];
 const SHOWS = ['Morning Briefing', 'World Report', 'Match Day Live', 'The Late Show', 'Nature Uncovered', 'Kitchen Heroes', 'Top 40 Countdown',
@@ -168,10 +186,15 @@ const movies = Array.from({ length: 60 }, (_, i) => ({
   id: 5000 + i,
   name: `${['The', 'Return of the', 'Last', 'Secret', 'Midnight'][i % 5]} ${WORDS[i % WORDS.length]} ${['Protocol', 'Odyssey', 'Heist', 'Garden', 'Signal', 'Run'][i % 6]} (${2000 + (i % 25)})`,
   cat: (i % VOD_CATS.length) + 1,
-  ext: i % 7 === 3 ? 'mkv' : 'mp4',
+  ext: i % 7 === 3 || i % 7 === 5 ? 'mkv' : 'mp4',
   rating: ((i * 37) % 50) / 10 + 5,
   added: Math.floor(Date.now() / 1000) - i * 86400,
 }));
+/** Movies whose file has English + Spanish audio and subtitles (every 7th, starting with the 6th). */
+const MULTI_IDS = new Set(movies.filter((_, i) => i % 7 === 5).map((m) => m.id));
+movies[5].name = 'Babel Nights (2024)';
+// The same film in the Latin-American category, as providers list each dub separately.
+movies[6].name = 'LAT| Babel Nights (2024)';
 const series = Array.from({ length: 18 }, (_, i) => ({
   id: 9000 + i,
   name: `${WORDS[(i + 3) % WORDS.length]} ${['Detectives', 'Family', 'Academy', 'Chronicles', 'Street', 'Hospital'][i % 6]}`,
@@ -343,7 +366,7 @@ function handleApi(req: IncomingMessage, res: ServerResponse, q: URLSearchParams
           plot: `${m.name} is a thrilling mock feature used to test the movie details screen, resume playback and the server-side remux for ${m.ext.toUpperCase()} files.`,
           cast: 'Jane Actor, John Performer, Max Extra', director: 'Ada Director', rating: m.rating.toFixed(1), releasedate: `${m.name.match(/\((\d{4})\)/)?.[1] ?? '2020'}-01-01`,
           duration_secs: m.ext === 'mkv' ? 60 : 90, duration: m.ext === 'mkv' ? '00:01:00' : '00:01:30', video: { codec_name: 'h264', width: 854, height: 480 },
-          audio: { codec_name: m.ext === 'mkv' ? 'ac3' : 'aac', channels: 2 }, bitrate: 1200 },
+          audio: { codec_name: m.ext === 'mkv' && !MULTI_IDS.has(m.id) ? 'ac3' : 'aac', channels: 2 }, bitrate: 1200 },
         movie_data: { stream_id: m.id, name: m.name, added: String(m.added), category_id: String(m.cat + 100), container_extension: m.ext },
       });
     }
@@ -489,6 +512,7 @@ const server = createServer((req, res) => {
   if (m && killed.has(url.searchParams.get('token') ?? '')) return res.writeHead(503).end();
   if (m) return serveFile(req, res, join(MEDIA, `hls-${m[1]}`, m[2]), m[2].endsWith('.m3u8') ? 'application/vnd.apple.mpegurl' : 'video/mp2t');
   m = p.match(/^\/movie\/[^/]+\/[^/]+\/(\d+)\.(\w+)$/);
+  if (m && MULTI_IDS.has(Number(m[1]))) return serveFile(req, res, join(MEDIA, 'movie-multi.mkv'), 'video/x-matroska');
   if (m) return m[2] === 'mkv' ? serveFile(req, res, join(MEDIA, 'movie-ac3.mkv'), 'video/x-matroska') : serveFile(req, res, join(MEDIA, 'movie.mp4'), 'video/mp4');
   m = p.match(/^\/series\/[^/]+\/[^/]+\/(\d+)\.(\w+)$/);
   if (m) return serveFile(req, res, join(MEDIA, 'episode.mp4'), 'video/mp4');

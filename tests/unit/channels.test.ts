@@ -75,3 +75,12 @@ describe('event / PPV channels (real provider names)', () => {
     for (const n of ['LAT| TELEMUNDO ATLANTA HD', 'ARG| TNT SPORTS', 'US| ESPN PLAY EVENTS 44 HD', 'MXC| CANAL 5 (CAMARGO)', 'UK: Sky Sports Main Event']) expect(eventLabel(n)).toBeUndefined();
   });
 });
+
+describe('bar-wrapped prefixes', () => {
+  it('reads "|EN| …" like "EN| …", but never takes a leading word as a prefix', () => {
+    expect(parseChannelTags('Dune Part Two', '|EN| NEW RELEASED').lang).toBe('en');
+    expect(parseChannelTags('|LAT| Babel Nights').region).toBe('LAT');
+    expect(parseChannelTags('US Open Tennis').region).toBeUndefined();
+    expect(parseChannelTags('US Open Tennis').base).toBe('us open tennis');
+  });
+});

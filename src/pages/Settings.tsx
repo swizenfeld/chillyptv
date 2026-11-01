@@ -18,6 +18,11 @@ import type { ContentKind } from '../lib/types';
 // Curated signature accents: cinema red, gold, signal green, ice blue, violet, platinum.
 const ACCENTS = ['#e50914', '#d4a24c', '#00c805', '#a8c7fa', '#9b7bff', '#e4e4e7'];
 
+const TRACK_LANGS: [string, string][] = [
+  ['en', 'English'], ['es', 'Spanish'], ['pt', 'Portuguese'], ['fr', 'French'], ['de', 'German'], ['it', 'Italian'], ['nl', 'Dutch'],
+  ['ru', 'Russian'], ['ar', 'Arabic'], ['tr', 'Turkish'], ['pl', 'Polish'], ['ja', 'Japanese'], ['ko', 'Korean'], ['zh', 'Chinese'], ['hi', 'Hindi'],
+];
+
 export function SettingsPage() {
   const s = useSettings();
   const set = s.set;
@@ -103,11 +108,27 @@ export function SettingsPage() {
         <div className="field-row">
           <label className="field">
             <span>Preferred audio language</span>
-            <input className="input" value={s.preferredAudioLang} onChange={(e) => set({ preferredAudioLang: e.target.value.trim() })} placeholder="e.g. en, de, fr" />
+            <select className="select" value={s.preferredAudioLang} onChange={(e) => set({ preferredAudioLang: e.target.value })}>
+              <option value="">The file's default</option>
+              {TRACK_LANGS.map(([code, name]) => (
+                <option key={code} value={code}>
+                  {name}
+                </option>
+              ))}
+            </select>
+            <small className="hint">Movies and episodes with several audio tracks start in this language.</small>
           </label>
           <label className="field">
             <span>Preferred subtitle language</span>
-            <input className="input" value={s.preferredSubLang} onChange={(e) => set({ preferredSubLang: e.target.value.trim() })} placeholder="empty = off" />
+            <select className="select" value={s.preferredSubLang} onChange={(e) => set({ preferredSubLang: e.target.value })}>
+              <option value="">Off</option>
+              {TRACK_LANGS.map(([code, name]) => (
+                <option key={code} value={code}>
+                  {name}
+                </option>
+              ))}
+            </select>
+            <small className="hint">Shown automatically when a movie or episode has text subtitles in this language.</small>
           </label>
         </div>
       </section>

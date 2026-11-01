@@ -11,7 +11,9 @@ import { XtreamClient } from '../lib/xtream';
 import { backendHealth, imageUrl } from '../lib/api';
 import { Empty, Img, ProgressBar, Spinner } from '../components/ui';
 import { formatDuration, formatMinutes } from '../lib/format';
-import type { Episode, MediaInfo, SeriesDetails } from '../lib/types';
+import type { Episode, MediaInfo, Movie, SeriesDetails, SeriesItem } from '../lib/types';
+import { otherVersions } from '../lib/versions';
+import { Languages } from 'lucide-react';
 
 function useLockGate(categoryId: string | undefined): boolean {
   const settings = useSettings();
@@ -43,6 +45,39 @@ function cssUrl(url: string | undefined): string | undefined {
 function Backdrop({ src }: { src?: string }) {
   const bg = cssUrl(src);
   return bg ? <div className="detail-backdrop" style={{ backgroundImage: bg }} /> : <div className="detail-backdrop empty" />;
+}
+
+/** The same title in other categories of the catalogue — usually other languages. */
+function OtherVersions({ kind, item }: { kind: 'movie' | 'series'; item: Movie | SeriesItem }) {
+  const catalog = useCatalog((s) => s.catalog);
+  const index = useCatalog((s) => s.index);
+  const settings = useSettings();
+  const navigate = useNavigate();
+  const versions = useMemo(() => {
+    if (!catalog || !index) return [];
+    const name = (id: string) => index.categoryById.get(id)?.name ?? '';
+    return otherVersions(kind, item, catalog, name, (id) => isUnlocked() || !isCategoryLocked(settings, id, name(id)));
+  }, [kind, item, catalog, index, settings]);
+  if (!versions.length) return null;
+  return (
+    <div className="other-versions">
+      <h3>
+        <Languages size={16} aria-hidden /> Also available
+      </h3>
+      <div className="row gap wrap">
+        {versions.map((v) => (
+          <button key={v.item.id} className="version-chip" onClick={() => navigate(`/${kind === 'movie' ? 'movies' : 'series'}/${encodeURIComponent(v.item.id)}`)} title={v.item.name}>
+            <b>{v.language ?? v.category}</b>
+            {[v.language ? v.category : '', v.quality].filter(Boolean).map((x) => (
+              <span key={x} className="muted">
+                {x}
+              </span>
+            ))}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
 }
 
 function trailerUrl(t?: string): string | undefined {
@@ -144,6 +179,7 @@ export function MovieDetailPage() {
               </a>
             )}
           </div>
+          <OtherVersions kind="movie" item={movie} />
           {needsRemux && backendHealth()?.ffmpeg && (
             <p className="hint">
               <Zap size={14} /> {ext!.toUpperCase()} files are converted on the fly by your ChillyPTV server if the browser cannot play them.
@@ -275,6 +311,7 @@ export function SeriesDetailPage() {
               </a>
             )}
           </div>
+          <OtherVersions kind="series" item={series} />
         </div>
       </div>
       <div className="episodes">
