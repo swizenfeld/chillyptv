@@ -341,7 +341,8 @@ async function main() {
     const fmt = (t: number) => new Date(t).toISOString().slice(5, 16).replace('T', ' ');
     for (const { c, e } of fromName.filter((_, i) => i % Math.max(1, Math.floor(fromName.length / 15)) === 0).slice(0, 15)) out(`- ${fmt(e!.start)} UTC · ${e!.title} ← \`${c.name}\``);
     // Finished slots without a time ("End | … | 00:00 (GMT)") need no listing; anything else here is a miss.
-    const skipped = uncovered.filter((c) => !c.tags.event && /\|/.test(c.name) && /\s(vs?\.?|x|-)\s/i.test(c.name) && !eventListing(c.name));
+    const timeLike = /\b\d{1,2}:\d{2}\b|\d{4}-\d{2}-\d{2}|^\W*(next|live|upcoming|soon)\W/i;
+    const skipped = uncovered.filter((c) => !c.tags.event && /\|/.test(c.name) && /\s(vs?\.?|x|-)\s/i.test(c.name) && timeLike.test(c.name) && !eventListing(c.name));
     const endedNoTime = uncovered.filter((c) => c.tags.event === 'ended' && !eventListing(c.name)).length;
     if (endedNoTime) out(`(${endedNoTime.toLocaleString()} finished event slots carry no time and get no listing; that's expected.)`);
     if (skipped.length) {
@@ -511,6 +512,23 @@ async function main() {
           }
         });
       });
+    // What titles and categories say about languages, across the whole catalogue (cheap, name-based).
+    {
+      const all = vodItems.map((m) => `${m.name ?? ''} ${vodCatName.get(String(m.category_id)) ?? ''}`);
+      const n = (re: RegExp) => all.filter((t) => re.test(t)).length;
+      table(['Movie titles / categories that say…', 'Movies', 'Share'], [
+        ['MULTI SUB / multiple subtitles', n(/multi[\s-]*subs?/i), pct(n(/multi[\s-]*subs?/i), all.length)],
+        ['ENG SUB / English subtitles', n(/\beng?[\s-]*subs?\b|english sub/i), pct(n(/\beng?[\s-]*subs?\b|english sub/i), all.length)],
+        ['MULTI AUDIO / DUAL audio', n(/multi[\s-]*audio|\bdual\b/i), pct(n(/multi[\s-]*audio|\bdual\b/i), all.length)],
+        ['Latino / Castellano / Spanish', n(/latino|castellano|espa[nñ]ol|spanish|\|lat\||\bes\b/i), pct(n(/latino|castellano|espa[nñ]ol|spanish|\|lat\||\bes\b/i), all.length)],
+      ]);
+      const subbed = vodItems.filter((m) => /multi[\s-]*subs?|\beng?[\s-]*subs?\b/i.test(`${m.name ?? ''} ${vodCatName.get(String(m.category_id)) ?? ''}`));
+      // Make sure some of those are in the sample: they're the files most likely to carry subtitle tracks.
+      for (const m of spread(subbed, (x) => String(x.category_id), (x) => Number(x.added) || 0, 6)) {
+        if (items.some((i) => i.info?.stream_id === m.stream_id)) continue;
+        items.push({ kind: 'movie', title: String(m.name ?? ''), category: vodCatName.get(String(m.category_id)) ?? '', url: `${base}/movie/${encodeURIComponent(user!)}/${encodeURIComponent(pass!)}/${m.stream_id}.${m.container_extension || 'mp4'}`, info: m });
+      }
+    }
     const results: { it: Item; p: MediaProbe | string }[] = [];
     if (hasProbe) {
       out(`Checked ${items.length} files with ffprobe, one at a time (your plan allows one connection, so nothing else should be playing). Each check reads only the start of the file.`);
@@ -523,7 +541,7 @@ async function main() {
         try {
           const r = await getText(api({ action: 'get_vod_info', vod_id: String(it.info?.stream_id) }), 30_000);
           const info = (JSON.parse(r.text) as { info?: { audio?: { codec_name?: string; channels?: number; tags?: { language?: string } }; video?: { codec_name?: string; width?: number; height?: number } } }).info ?? {};
-          results.push({ it, p: { duration: null, ...(info.video ? { video: { codec: info.video.codec_name ?? '?', width: info.video.width, height: info.video.height } } : {}), audio: info.audio ? [{ index: 0, codec: info.audio.codec_name ?? '?', channels: info.audio.channels, lang: info.audio.tags?.language }] : [], subtitles: [] } });
+          results.push({ it, p: { duration: null, container: String(it.info?.container_extension ?? '') || undefined, ...(info.video ? { video: { codec: info.video.codec_name ?? '?', width: info.video.width, height: info.video.height } } : {}), audio: info.audio ? [{ index: 0, codec: info.audio.codec_name ?? '?', channels: info.audio.channels, lang: info.audio.tags?.language }] : [], subtitles: [] } });
         } catch (e) {
           results.push({ it, p: why(e) });
         }

@@ -58,6 +58,10 @@ describe('listings from event channel names (real provider names)', () => {
     ['AU (STAN 51) | AEK Athens v Real Madrid  UEFA Champions League Matchday 4 2026/2027 (2026-11-05 04:40:50)', 'AEK Athens v Real Madrid · UEFA Champions League', '2026-11-04T17:40'],
     ['(FLSP 220) | fc:  Marietta vs Baldwin Wallace _ Women`s (Marietta vs Baldwin Wallace) (2026-10-31 13:03:30)', 'Soccer: Marietta vs Baldwin Wallace · Women’s', '2026-10-31T17:03'],
     ['ENDED | UNC ASHEVILLE VS. HIGH POINT | Sat 31 Oct 19:30 EDT (US) | 8K EXCLUSIVE | US: ESPN+ PPV 247', 'UNC Asheville vs. High Point', '2026-10-31T23:30'],
+    // From the third report: DAZN slots with separate date and time, FloSports "live:" placeholder prefix.
+    ['Next | AS Maaya vs. Rahimo FC | Ligue 1 - Burkina Faso | 2026-10-31 | 15:30 (GMT) | 8K EXCLUSIVE | US: DAZN PPV 12', 'AS Maaya vs. Rahimo FC · Ligue 1 - Burkina Faso', '2026-10-31T15:30'],
+    ['NEXT | MAINE VS. UMBC | Sat 31 Oct 12:00 EDT (US) | 8K EXCLUSIVE | US: ESPN+ PPV 32', 'Maine vs. UMBC', '2026-10-31T16:00'],
+    ['(FLSP 364) | live:  NEWMAC Field Hockey Championship _ Game 1 (2026-10-31 04:57:05)', 'NEWMAC Field Hockey Championship · Game 1', '2026-10-31T08:57'],
     // A live slot without a time is on now.
     ['Live | Sporting Kansas City vs. FC Dallas | all | 8K EXCLUSIVE | US: SOCCER PPV 118', 'Sporting Kansas City vs. FC Dallas', '2026-10-31T20:30'],
   ])('%s', (name, title, start) => {

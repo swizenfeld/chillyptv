@@ -74,6 +74,13 @@ function parseStart(name: string, now: number): number | undefined {
     const t = zonedTime(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], zone);
     return Math.abs(t - now) < 30 * 86_400_000 ? t : undefined; // "(2098-12-31 …)" placeholders
   }
+  // DAZN slots: "| 2026-11-01 | 15:30 (GMT) |"
+  m = name.match(/\|\s*(\d{4})-(\d{2})-(\d{2})\s*\|\s*(\d{1,2}):(\d{2})\s*(?:\(([A-Z]{2,4})\))?/);
+  if (m) {
+    const off = m[6] ? ABBR[m[6].toLowerCase()] : undefined;
+    if (off !== undefined && Number.isInteger(off)) return Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5]) - off * 3_600_000;
+    return zonedTime(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], zone);
+  }
   // "Sat 31 Oct 13:00 EDT", "31 Oct 08:55 EDT"
   m = name.match(/\b(\d{1,2})\s+(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+(\d{1,2}):(\d{2})\s*([AP]M)?\s*([A-Z]{2,4})?\b/i);
   // "Oct 31 2:00PM ET", "@ Oct 31 8:20 AM"
@@ -106,6 +113,7 @@ const NOT_EVENT: RegExp[] = [
   /^\W*(live|end|ended|finished|final|upcoming|soon|next|en vivo|en directo)\W*$/i, // status
   new RegExp(`^(?:(?:mon|tue|wed|thu|fri|sat|sun)[a-z]*\\.?\\s+)?(?:\\d{1,2}\\s+${MONTH}|${MONTH}\\s+\\d{1,2})\\b`, 'i'), // "Sat 31 Oct 13:00 EDT"
   /^\d{1,2}[-/.]\d{1,2}[-/.]\d{2,4}$/, // "31-10-2026"
+  /^\d{4}-\d{2}-\d{2}$/, // "2026-11-01"
   /^\d{1,2}:\d{2}\b/, // "00:00 (GMT)"
   /^(all|tbd|tba)$/i,
   /\bexclusive\b/i, // "8K EXCLUSIVE"
@@ -114,7 +122,7 @@ const NOT_EVENT: RegExp[] = [
   /^[A-Z]{2,4}$/, // "LAT"
 ];
 
-const UPPER = new Set(['fc', 'cf', 'ud', 'sc', 'ac', 'cd', 'afc', 'rcd', 'sd', 'usa', 'nyc', 'ny', 'dc', 'lafc', 'psg', 'ii', 'iii', 'nfl', 'nba', 'nhl', 'mlb', 'mls', 'ufc', 'wwe', 'ncaa', 'unc', 'ucla', 'usc', 'lsu', 'tcu', 'byu', 'smu', 'ucf', 'uconn', 'utep', 'aek', 'psv', 'az']);
+const UPPER = new Set(['fc', 'cf', 'ud', 'sc', 'ac', 'cd', 'afc', 'rcd', 'sd', 'usa', 'nyc', 'ny', 'dc', 'lafc', 'psg', 'ii', 'iii', 'nfl', 'nba', 'nhl', 'mlb', 'mls', 'ufc', 'wwe', 'ncaa', 'unc', 'ucla', 'usc', 'lsu', 'tcu', 'byu', 'smu', 'ucf', 'uconn', 'utep', 'aek', 'psv', 'az', 'umbc', 'utsa', 'uab', 'ucsb', 'uic', 'vcu', 'unlv', 'fiu', 'fau', 'uta', 'utrgv', 'siue', 'liu', 'njit']);
 const LOWER = new Set(['de', 'del', 'la', 'las', 'los', 'el', 'y', 'of', 'the', 'and', 'vs', 'v', 'at']);
 
 /** "LEVANTE UD VS. ATLÉTICO DE MADRID" → "Levante UD vs. Atlético de Madrid"; mixed case is left alone. */
@@ -140,6 +148,9 @@ export function eventTitle(name: string): string | undefined {
   const segments = text.split('|').map((s) => s.trim()).filter((s) => s && !NOT_EVENT.some((re) => re.test(s)));
   let seg = segments.find((s) => VERSUS.test(` ${s} `)) ?? segments.find((s) => /\p{L}{3}/u.test(s) && s.length >= 8);
   if (!seg) return undefined;
+  // DAZN-style "A vs. B | Ligue 1 - Burkina Faso | 2026-11-01 | …": the next segment is the competition.
+  const next = segments[segments.indexOf(seg) + 1];
+  const competition = name.includes('|') && next && !VERSUS.test(` ${next} `.replace(/\s[-–]\s/g, ' ')) && /\p{L}{3}/u.test(next) && next.length <= 40 ? next : undefined;
   seg = seg
     .replace(/\(\d{4}-\d{2}-\d{2}[^)]*\)/g, ' ') // "(2026-10-31 14:03:05)"
     .replace(new RegExp(`\\b${MONTH}\\s+\\d{1,2}\\s+\\d{1,2}:\\d{2}\\s*([AP]M)?\\s*([A-Z]{2,4})?\\b.*$`, 'i'), ' ') // "Oct 31 2:00PM ET"
@@ -155,7 +166,8 @@ export function eventTitle(name: string): string | undefined {
   // "Soccer: Levante vs. Atlético Madrid (Levante vs. Atlético de Madrid (ESP))" → drop the repeat.
   seg = seg.replace(/\s*\((?:[^()]|\([^()]*\))*\bvs?\.?\s(?:[^()]|\([^()]*\))*\)\s*$/i, '').trim();
   // "hockey: Winnipeg …" → "Hockey: Winnipeg …"; "fc:" is FloSports' soccer.
-  seg = seg.replace(/^([a-z][a-z ]{1,20}):\s*/, (_, sport: string) => `${SPORT_PREFIX[sport] ?? sport[0].toUpperCase() + sport.slice(1)}: `);
+  seg = seg.replace(/^([a-z][a-z ]{1,20}):\s*/, (_, sport: string) => (sport === 'live' ? '' : `${SPORT_PREFIX[sport] ?? sport[0].toUpperCase() + sport.slice(1)}: `));
+  if (competition && !seg.includes(competition)) seg = `${seg} · ${competition}`;
   if (seg.length < 5 || /no event/i.test(seg)) return undefined;
   return titleCase(seg);
 }

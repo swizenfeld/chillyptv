@@ -184,6 +184,11 @@ const ALIASES: Record<string, string[]> = {
   'san martin tucuman': ['san martin de tucuman'],
   'instituto cordoba': ['instituto de cordoba'],
   'racing cordoba': ['racing de cordoba'],
+  'newell s old boys': ['newells', 'newell s', 'newells old boys'],
+  'union santa fe': ['union', 'union de santa fe'],
+  'gimnasia mendoza': ['gimnasia', 'gimnasia de mendoza', 'gimnasia y esgrima de mendoza'],
+  'gimnasia y tiro salta': ['gimnasia y tiro', 'gimnasia y tiro de salta'],
+  'belgrano cordoba': ['belgrano', 'belgrano de cordoba'],
 };
 
 const ALIAS_INDEX: { canon: string; names: string[] }[] = Object.entries(ALIASES).map(([canon, names]) => ({ canon, names: [canon, ...names] }));
