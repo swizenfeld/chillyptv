@@ -5,6 +5,7 @@ import { useCatalog } from '../store/catalog';
 import { useActiveProfile } from '../store/profiles';
 import { useFavorites, useHistory, useIsFavorite, useLibrary } from '../store/library';
 import { nowNext, programmesFor, useChannelProgrammes } from '../store/epg';
+import { newReleases, releaseCategory } from '../lib/releases';
 import { useSettings } from '../store/settings';
 import { useSports } from '../store/SportsProvider';
 import { MatchCard } from '../components/SportsToday';
@@ -14,7 +15,7 @@ import { LiveCard, PosterCard, Row, RowLink, WideCard, channelHue } from '../com
 import { Empty, Img, ProgressBar, Spinner, useNow } from '../components/ui';
 import { VideoPlayer } from '../player/VideoPlayer';
 import { formatClock, formatDay, formatDuration, formatMinutes } from '../lib/format';
-import type { Channel, Profile } from '../lib/types';
+import type { Channel, Movie, Profile } from '../lib/types';
 
 export function HomePage() {
   const navigate = useNavigate();
@@ -34,9 +35,18 @@ export function HomePage() {
     return (catId: string) => !locked(catId, index?.categoryById.get(catId)?.name ?? '');
   }, [locked, index]);
 
-  const recentMovies = useMemo(() => {
-    if (!catalog) return [];
-    return catalog.movies.filter((m) => allowed(m.categoryId)).sort((a, b) => (b.added ?? 0) - (a.added ?? 0)).slice(0, 20);
+  // The provider's own "New released" category when it has one, newest additions first;
+  // otherwise the newest films by release year.
+  const releases = useMemo(() => {
+    if (!catalog) return { movies: [] as Movie[], categoryId: undefined as string | undefined };
+    const counts = new Map<string, number>();
+    for (const m of catalog.movies) counts.set(m.categoryId, (counts.get(m.categoryId) ?? 0) + 1);
+    const cat = releaseCategory(catalog.categories.movie.filter((c) => allowed(c.id)), (id) => counts.get(id) ?? 0);
+    if (cat) {
+      const inCat = catalog.movies.filter((m) => m.categoryId === cat.id).sort((a, b) => (b.added ?? 0) - (a.added ?? 0));
+      return { movies: inCat.slice(0, 20), categoryId: cat.id };
+    }
+    return { movies: newReleases(catalog.movies.filter((m) => allowed(m.categoryId))), categoryId: undefined };
   }, [catalog, allowed]);
 
   const recentSeries = useMemo(() => {
@@ -172,9 +182,9 @@ export function HomePage() {
         </section>
       )}
 
-      {recentMovies.length > 0 && (
-        <Row title="Recently added movies" action={<RowLink to="/movies" />}>
-          {recentMovies.map((m) => (
+      {releases.movies.length > 0 && (
+        <Row title="New releases" action={<RowLink to={releases.categoryId ? `/movies?cat=${encodeURIComponent(releases.categoryId)}&sort=added` : '/movies?sort=year'} />}>
+          {releases.movies.map((m) => (
             <PosterCard key={m.id} title={m.name} image={m.poster} rating={m.rating} subtitle={m.year} onClick={() => navigate(`/movies/${encodeURIComponent(m.id)}`)} />
           ))}
         </Row>

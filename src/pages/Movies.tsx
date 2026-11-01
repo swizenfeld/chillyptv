@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Clock, Film, Search, Star } from 'lucide-react';
 import { useCatalog } from '../store/catalog';
@@ -34,6 +34,16 @@ function VodBrowser({ kind }: { kind: Extract<ContentKind, 'movie' | 'series'> }
   const history = useHistory(profile?.id);
   const toggleFavorite = useLibrary((s) => s.toggleFavorite);
   const navigate = useNavigate();
+  // "See all" links can pick the sort ("/movies?sort=year" from New releases); it then sticks like a manual choice.
+  const sortParam = params.get('sort');
+  useEffect(() => {
+    if (sortParam === 'added' || sortParam === 'name' || sortParam === 'rating' || sortParam === 'year') {
+      setSettings({ movieSort: sortParam });
+      const next = new URLSearchParams(params);
+      next.delete('sort');
+      setParams(next, { replace: true });
+    }
+  }, [sortParam]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const all: Item[] = useMemo(() => (kind === 'movie' ? (catalog?.movies ?? []) : (catalog?.series ?? [])), [catalog, kind]);
   const counts = useMemo(() => {

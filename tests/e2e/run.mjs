@@ -119,6 +119,16 @@ await step('add Xtream playlist', async () => {
 
 await step('home dashboard', async () => {
   await page.locator('.hero').waitFor();
+  // "New releases" comes from the provider's own "|EN| NEW RELEASED" category once movies arrive.
+  const row = page.locator('section.row-section', { has: page.getByRole('heading', { name: 'New releases' }) });
+  await row.locator('.poster-card').first().waitFor({ timeout: 30000 });
+  const href = await row.locator('.row-link').getAttribute('href');
+  const cats = await (await fetch(`${MOCK}/player_api.php?username=demo&password=demo&action=get_vod_categories`)).json();
+  const id = cats.find((c) => c.category_name === '|EN| NEW RELEASED').category_id;
+  if (!href.includes(`cat=${id}`)) throw new Error(`New releases links to ${href}`);
+  const vod = await (await fetch(`${MOCK}/player_api.php?username=demo&password=demo&action=get_vod_streams&category_id=${id}`)).json();
+  const first = vod.sort((a, b) => b.added - a.added)[0].name;
+  await row.locator('.poster-title').first().getByText(first, { exact: true }).waitFor();
   await page.screenshot({ path: join(OUT, '01-home.png') });
 });
 

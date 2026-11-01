@@ -86,7 +86,7 @@ process.on('SIGTERM', () => process.exit(0));
 
 // ----------------------------------------------------------------- data ----
 const LIVE_CATS = ['News', 'Sports', 'Movies 24/7', 'Kids', 'Documentary', 'Music', 'UK | Entertainment', 'US | Local', 'Adult XXX'];
-const VOD_CATS = ['Action', 'Comedy', 'Drama', 'Sci-Fi', 'Family'];
+const VOD_CATS = ['Action', 'Comedy', 'Drama', 'Sci-Fi', 'Family', '|EN| NEW RELEASED'];
 const SERIES_CATS = ['Crime Drama', 'Sitcoms', 'Anime'];
 const WORDS = ['Global', 'Prime', 'Star', 'Nova', 'Metro', 'Pulse', 'Vista', 'Arena', 'Echo', 'Zen', 'Orbit', 'Peak', 'Wave', 'Blue', 'Fox', 'Sky'];
 const SHOWS = ['Morning Briefing', 'World Report', 'Match Day Live', 'The Late Show', 'Nature Uncovered', 'Kitchen Heroes', 'Top 40 Countdown',
