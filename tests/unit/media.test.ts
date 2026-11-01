@@ -60,3 +60,33 @@ describe('streamed WebVTT', () => {
     expect(parseVttChunk('01:02:03.250 --> 01:02:05.000\nLate', true).cues[0].start).toBe(3723.25);
   });
 });
+
+describe('track info from ffmpeg when ffprobe is missing', () => {
+  it('reads the same tracks from ffmpeg -i output', async () => {
+    const { parseFfmpegInfo } = await import('../../shared/media');
+    const out = `Input #0, matroska,webm, from 'http://x/m.mkv':
+  Metadata:
+    ENCODER         : Lavf60.16.100
+  Duration: 01:52:10.50, start: 0.000000, bitrate: 4200 kb/s
+  Stream #0:0: Video: h264 (High), yuv420p(tv, progressive), 1920x1080 [SAR 1:1 DAR 16:9], 23.98 fps (default)
+  Stream #0:1(eng): Audio: eac3, 48000 Hz, 5.1(side), fltp, 640 kb/s (default)
+    Metadata:
+      title           : English 5.1
+  Stream #0:2[0x2](spa): Audio: aac (LC), 48000 Hz, stereo, fltp
+    Metadata:
+      title           : Español Latino
+  Stream #0:3(spa): Subtitle: subrip (forced)
+  Stream #0:4(eng): Subtitle: hdmv_pgs_subtitle, 1920x1080
+At least one output file must be specified`;
+    const p = parseFfmpegInfo(out)!;
+    expect(p.duration).toBeCloseTo(6730.5);
+    expect(p.container).toBe('matroska,webm');
+    expect(p.video).toEqual({ codec: 'h264', width: 1920, height: 1080 });
+    expect(p.audio).toEqual([
+      { index: 0, codec: 'eac3', channels: 6, lang: 'eng', title: 'English 5.1', default: true },
+      { index: 1, codec: 'aac', channels: 2, lang: 'spa', title: 'Español Latino', default: false },
+    ]);
+    expect(p.subtitles.map((s) => [s.lang, s.text, s.forced])).toEqual([['spa', true, true], ['eng', false, false]]);
+    expect(parseFfmpegInfo('http://x: Server returned 404 Not Found')).toBeNull();
+  });
+});

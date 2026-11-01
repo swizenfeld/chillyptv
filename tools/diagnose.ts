@@ -27,7 +27,7 @@ import {
 import { normalize } from '../src/lib/search';
 import { trimGuide } from '../shared/guide';
 import { eventListing } from '../shared/events';
-import { ffprobeArgs, languageName, parseProbe, type MediaProbe } from '../shared/media';
+import { ffmpegInfoArgs, ffprobeArgs, languageName, parseFfmpegInfo, parseProbe, type MediaProbe } from '../shared/media';
 
 // ------------------------------------------------------------------ options
 const argv = process.argv.slice(2);
@@ -458,7 +458,11 @@ async function main() {
   if (!flag('no-media') && !m3u && api && (vodItems.length || seriesItems.length)) {
     out('## Movies and episodes: languages and subtitles');
     const ffprobe = process.env.CHILLY_FFPROBE ?? 'ffprobe';
-    const hasProbe = spawnSync(ffprobe, ['-version'], { stdio: 'ignore' }).status === 0;
+    const hasFfprobe = spawnSync(ffprobe, ['-version'], { stdio: 'ignore' }).status === 0;
+    // ffmpeg-only installs (no ffprobe): ffmpeg's own stream listing carries the same track details.
+    const ffmpegBin = process.env.CHILLY_FFMPEG ?? 'ffmpeg';
+    const hasFfmpeg = !hasFfprobe && spawnSync(ffmpegBin, ['-version'], { stdio: 'ignore' }).status === 0;
+    const hasProbe = hasFfprobe || hasFfmpeg;
     const wantMovies = Number(opt('movies') ?? 24);
     const wantEpisodes = Number(opt('episodes') ?? 8);
     // Spread the sample across categories (newest first in each), like browsing would.
@@ -496,7 +500,10 @@ async function main() {
     }
     const probeOne = (url: string) =>
       new Promise<MediaProbe | string>((resolve) => {
-        const child = spawn(ffprobe, ffprobeArgs(url, UA, 'http,https,tcp,tls,crypto,httpproxy'), { stdio: ['ignore', 'pipe', 'pipe'] });
+        const protocols = 'http,https,tcp,tls,crypto,httpproxy';
+        const child = hasFfprobe
+          ? spawn(ffprobe, ffprobeArgs(url, UA, protocols), { stdio: ['ignore', 'pipe', 'pipe'] })
+          : spawn(ffmpegBin, ffmpegInfoArgs(url, UA, protocols), { stdio: ['ignore', 'pipe', 'pipe'] });
         let o = '';
         let err = '';
         child.stdout.on('data', (d: Buffer) => (o += d));
@@ -506,7 +513,9 @@ async function main() {
         child.on('close', () => {
           clearTimeout(timer);
           try {
-            resolve(parseProbe(JSON.parse(o)));
+            const parsed = hasFfprobe ? parseProbe(JSON.parse(o)) : parseFfmpegInfo(err);
+            if (!parsed) throw new Error('no stream info');
+            resolve(parsed);
           } catch {
             resolve(err.trim().split('\n').pop() || 'no answer within 30 s');
           }
@@ -531,7 +540,7 @@ async function main() {
     }
     const results: { it: Item; p: MediaProbe | string }[] = [];
     if (hasProbe) {
-      out(`Checked ${items.length} files with ffprobe, one at a time (your plan allows one connection, so nothing else should be playing). Each check reads only the start of the file.`);
+      out(`Checked ${items.length} files with ${hasFfprobe ? 'ffprobe' : 'ffmpeg (ffprobe is not installed; ffmpeg lists the same tracks)'}, one at a time (your plan allows one connection, so nothing else should be playing). Each check reads only the start of the file.`);
       await timed(`Track check (${items.length} files)`, async () => {
         for (const it of items) results.push({ it, p: await probeOne(it.url) });
       });

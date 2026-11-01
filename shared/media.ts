@@ -125,3 +125,47 @@ export function subtitleLabel(t: SubtitleTrack): string {
   const extra = [t.title && !new RegExp(`^${name}$`, 'i').test(t.title) ? t.title : '', t.forced ? 'forced' : ''].filter(Boolean).join(', ');
   return `${name}${extra ? ` (${extra})` : ''}`;
 }
+
+/** Arguments for `ffmpeg` to print a file's streams (it exits with an error after printing; that's expected). */
+export function ffmpegInfoArgs(url: string, ua: string, protocols: string): string[] {
+  return ['-hide_banner', '-nostdin', '-protocol_whitelist', protocols, '-user_agent', ua, '-i', url];
+}
+
+/**
+ * Reads the stream list ffmpeg prints for `-i` (used when ffprobe isn't installed, as with some
+ * ffmpeg-only builds), e.g. "Stream #0:2(spa): Audio: aac (LC), 48000 Hz, 5.1, fltp (default)".
+ */
+export function parseFfmpegInfo(stderr: string): MediaProbe | null {
+  const input = stderr.match(/^Input #0, (.+?), from /m);
+  if (!input) return null;
+  const dur = stderr.match(/Duration: (\d+):(\d{2}):(\d{2}(?:\.\d+)?)/);
+  const streams: RawStream[] = [];
+  let current: RawStream | null = null;
+  for (const line of stderr.split('\n')) {
+    const m = line.match(/^\s*Stream #0:\d+(?:\[0x[0-9a-f]+\])?(?:\(([a-z]{2,3})\))?: (Video|Audio|Subtitle|Data|Attachment): ([\w-]+)(.*)$/i);
+    if (m) {
+      const rest = m[4];
+      const size = rest.match(/\b(\d{2,5})x(\d{2,5})\b/);
+      const layout = rest.match(/\b(mono|stereo|2\.1|4\.0|5\.0|5\.1|6\.1|7\.1)\b/);
+      const nch = rest.match(/\b(\d+) channels\b/);
+      const CH: Record<string, number> = { mono: 1, stereo: 2, '2.1': 3, '4.0': 4, '5.0': 5, '5.1': 6, '6.1': 7, '7.1': 8 };
+      current = {
+        codec_type: m[2].toLowerCase(),
+        codec_name: m[3],
+        ...(size ? { width: Number(size[1]), height: Number(size[2]) } : {}),
+        ...(layout ? { channels: CH[layout[1]] } : nch ? { channels: Number(nch[1]) } : {}),
+        tags: m[1] ? { language: m[1] } : {},
+        disposition: { default: /\(default\)/.test(rest) ? 1 : 0, forced: /\(forced\)/.test(rest) ? 1 : 0 },
+      };
+      streams.push(current);
+      continue;
+    }
+    const title = line.match(/^\s{6,}title\s*:\s*(.+?)\s*$/i);
+    if (title && current) current.tags = { ...current.tags, title: title[1] };
+    else if (/^\S/.test(line) || /^\s{0,2}\S/.test(line)) current = null; // left the stream's metadata block
+  }
+  return parseProbe({
+    format: { duration: dur ? String(Number(dur[1]) * 3600 + Number(dur[2]) * 60 + Number(dur[3])) : undefined, format_name: input[1] },
+    streams,
+  });
+}

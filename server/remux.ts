@@ -1,8 +1,8 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { ffmpegInfo, ffmpegPath, isHttpUrl, sendError, sendJson, userAgentFrom } from './util.js';
 import { assertAllowedTarget } from './guard.js';
-import { ffprobeArgs, parseProbe } from '../shared/media.js';
+import { ffmpegInfoArgs, ffprobeArgs, parseFfmpegInfo, parseProbe, type MediaProbe } from '../shared/media.js';
 
 /** Only allow network protocols as ffmpeg input (no file:, pipe:, concat: …). */
 export const SAFE_PROTOCOLS = 'http,https,tcp,tls,crypto,httpproxy';
@@ -94,7 +94,39 @@ export async function handleRemux(req: IncomingMessage, res: ServerResponse, par
   });
 }
 
-/** Container duration, codecs, and audio/subtitle tracks via ffprobe (shared/media.ts). */
+let ffprobeOk: boolean | undefined;
+function ffprobeBin(): string {
+  return process.env.CHILLY_FFPROBE ?? ffmpegPath().replace(/ffmpeg(\.exe)?$/, 'ffprobe$1');
+}
+/** Some ffmpeg installs come without ffprobe; ffmpeg's own stream listing is used then. */
+function hasFfprobe(): boolean {
+  ffprobeOk ??= spawnSync(ffprobeBin(), ['-version'], { stdio: 'ignore' }).status === 0;
+  return ffprobeOk;
+}
+
+/** Runs ffprobe (or ffmpeg -i when ffprobe is missing) and resolves the tracks, or null. */
+export function probeMedia(url: string, ua: string, timeoutMs = 20000): Promise<MediaProbe | null> {
+  const viaProbe = hasFfprobe();
+  const child = viaProbe
+    ? spawn(ffprobeBin(), ffprobeArgs(url, ua, SAFE_PROTOCOLS), { stdio: ['ignore', 'pipe', 'ignore'] })
+    : spawn(ffmpegPath(), ffmpegInfoArgs(url, ua, SAFE_PROTOCOLS), { stdio: ['ignore', 'ignore', 'pipe'] });
+  return new Promise((resolve) => {
+    let out = '';
+    (viaProbe ? child.stdout! : child.stderr!).on('data', (d: Buffer) => (out += d.toString()));
+    const timer = setTimeout(() => child.kill('SIGKILL'), timeoutMs);
+    child.on('error', () => resolve(null));
+    child.on('close', () => {
+      clearTimeout(timer);
+      try {
+        resolve(viaProbe ? parseProbe(JSON.parse(out)) : parseFfmpegInfo(out));
+      } catch {
+        resolve(null);
+      }
+    });
+  });
+}
+
+/** Container duration, codecs, and audio/subtitle tracks (shared/media.ts). */
 export async function handleProbe(_req: IncomingMessage, res: ServerResponse, params: URLSearchParams): Promise<void> {
   if (!ffmpegInfo().ffmpeg) return sendError(res, 501, 'ffmpeg is not installed on the server');
   const url = params.get('url');
@@ -104,21 +136,9 @@ export async function handleProbe(_req: IncomingMessage, res: ServerResponse, pa
   } catch (e) {
     return sendError(res, 403, (e as Error).message);
   }
-  const bin = process.env.CHILLY_FFPROBE ?? ffmpegPath().replace(/ffmpeg(\.exe)?$/, 'ffprobe$1');
-  const child = spawn(bin, ffprobeArgs(url, userAgentFrom(params), SAFE_PROTOCOLS), { stdio: ['ignore', 'pipe', 'ignore'] });
-  let out = '';
-  child.stdout.on('data', (d: Buffer) => (out += d.toString()));
-  const timer = setTimeout(() => child.kill('SIGKILL'), 20000);
-  child.on('error', () => sendError(res, 501, 'ffprobe is not installed on the server'));
-  child.on('close', () => {
-    clearTimeout(timer);
-    if (res.headersSent) return;
-    try {
-      sendJson(res, 200, parseProbe(JSON.parse(out)));
-    } catch {
-      sendError(res, 502, 'Probe failed');
-    }
-  });
+  const probe = await probeMedia(url, userAgentFrom(params));
+  if (probe) sendJson(res, 200, probe);
+  else sendError(res, 502, 'Probe failed');
 }
 
 // ------------------------------------------------------------- subtitles ---
