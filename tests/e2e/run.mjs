@@ -295,6 +295,9 @@ await step('guide trimmed to the playlist; event channels listed from their name
 await step('movie tracks: other language version, audio switch, subtitles', async () => {
   // Babel Nights has English + Spanish audio and English + Spanish subtitles; a Spanish copy sits in |LAT| ESTRENOS.
   await page.goto(`${APP}/movies/5005`);
+  // The page reads the file's tracks while it's open, so Play doesn't wait for them.
+  await page.locator('.track-line span', { hasText: /^Subtitles English, Spanish$/ }).waitFor({ timeout: 30000 });
+  await page.locator('.track-line span', { hasText: /^Audio English, Spanish$/ }).waitFor();
   await page.locator('.other-versions .version-chip', { hasText: 'Spanish' }).waitFor();
   await page.screenshot({ path: join(OUT, '08b-other-versions.png') });
   await page.locator('.other-versions .version-chip', { hasText: 'Spanish' }).click();

@@ -104,8 +104,25 @@ function hasFfprobe(): boolean {
   return ffprobeOk;
 }
 
+/** Tracks per file URL. A file's tracks don't change, and reading them costs a provider connection. */
+const probeCache = new Map<string, { at: number; result: Promise<MediaProbe | null> }>();
+const PROBE_TTL = 12 * 3_600_000;
+
+/** Tracks for a file: cached, and a read already in flight (e.g. started by the movie page) is shared. */
+export function probeMedia(url: string, ua: string): Promise<MediaProbe | null> {
+  const hit = probeCache.get(url);
+  if (hit && Date.now() - hit.at < PROBE_TTL) return hit.result;
+  const result = runProbe(url, ua);
+  probeCache.set(url, { at: Date.now(), result });
+  void result.then((r) => {
+    if (!r) probeCache.delete(url); // failures are retried next time
+    if (probeCache.size > 2000) probeCache.delete(probeCache.keys().next().value!);
+  });
+  return result;
+}
+
 /** Runs ffprobe (or ffmpeg -i when ffprobe is missing) and resolves the tracks, or null. */
-export function probeMedia(url: string, ua: string, timeoutMs = 20000): Promise<MediaProbe | null> {
+function runProbe(url: string, ua: string, timeoutMs = 20000): Promise<MediaProbe | null> {
   const viaProbe = hasFfprobe();
   const child = viaProbe
     ? spawn(ffprobeBin(), ffprobeArgs(url, ua, SAFE_PROTOCOLS), { stdio: ['ignore', 'pipe', 'ignore'] })

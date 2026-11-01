@@ -3703,3 +3703,17 @@ textarea.input {
   overflow: hidden;
   text-overflow: ellipsis;
 }
+
+.track-line {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 18px;
+  margin: 2px 0 14px;
+  font-size: 13px;
+  color: var(--muted);
+}
+.track-line b {
+  color: var(--text);
+  font-weight: 600;
+  margin-right: 4px;
+}

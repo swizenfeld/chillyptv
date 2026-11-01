@@ -13,6 +13,10 @@ import { Empty, Img, ProgressBar, Spinner } from '../components/ui';
 import { formatDuration, formatMinutes } from '../lib/format';
 import type { Episode, MediaInfo, Movie, SeriesDetails, SeriesItem } from '../lib/types';
 import { otherVersions } from '../lib/versions';
+import { useFileTracks } from '../lib/tracks';
+import { episodeRequest, movieRequest } from '../lib/streams';
+import { usePlayer } from '../store/player';
+import { languageName, lang2, type MediaProbe } from '../../shared/media';
 import { Languages } from 'lucide-react';
 
 function useLockGate(categoryId: string | undefined): boolean {
@@ -76,6 +80,53 @@ function OtherVersions({ kind, item }: { kind: 'movie' | 'series'; item: Movie |
           </button>
         ))}
       </div>
+    </div>
+  );
+}
+
+/**
+ * Audio and subtitle languages in the file, read by the server while the page is open so that
+ * pressing Play doesn't wait for it. Skipped while something is playing: on a one-connection
+ * plan, reading the file would cut that stream off.
+ */
+function TrackSummary({ url, ua }: { url?: string; ua?: string }) {
+  const playing = usePlayer((s) => !!s.session);
+  const tracks = useFileTracks(playing ? undefined : url, ua);
+  const subLang = useSettings((s) => s.preferredSubLang);
+  const audioLang = useSettings((s) => s.preferredAudioLang);
+  if (!tracks) return null;
+  return <TrackLine tracks={tracks} preferred={[subLang, audioLang]} />;
+}
+
+function TrackLine({ tracks, preferred }: { tracks: MediaProbe; preferred: string[] }) {
+  const names = (codes: (string | undefined)[]) => {
+    const want = preferred.map((p) => lang2(p) ?? p).filter(Boolean);
+    const uniq = [...new Set(codes.map((c) => languageName(c)).filter(Boolean) as string[])];
+    const first = (n: string) => want.some((w) => languageName(w) === n);
+    return uniq.sort((a, b) => Number(first(b)) - Number(first(a)) || a.localeCompare(b));
+  };
+  const text = tracks.subtitles.filter((t) => t.text);
+  const subs = names(text.map((t) => t.lang));
+  const audio = names(tracks.audio.map((a) => a.lang));
+  if (!subs.length && audio.length < 2 && !tracks.subtitles.length) return null;
+  const list = (l: string[], max: number) => (l.length > max ? `${l.slice(0, max).join(', ')} +${l.length - max} more` : l.join(', '));
+  return (
+    <div className="track-line">
+      {audio.length > 1 && (
+        <span>
+          <b>Audio</b> {list(audio, 4)}
+        </span>
+      )}
+      {subs.length > 0 && (
+        <span title={subs.join(', ')}>
+          <b>Subtitles</b> {list(subs, 5)}
+        </span>
+      )}
+      {!text.length && tracks.subtitles.length > 0 && (
+        <span className="muted">
+          <b>Subtitles</b> picture-based only, which can't be shown here
+        </span>
+      )}
     </div>
   );
 }
@@ -155,6 +206,7 @@ export function MovieDetailPage() {
               <b>Director:</b> {info.director}
             </p>
           )}
+          <TrackSummary url={loading ? undefined : movieRequest(profile, movie, { ext }).url} ua={profile.userAgent} />
           {resumable && (
             <div className="resume-bar">
               <ProgressBar value={h!.position / h!.duration} />
@@ -311,6 +363,7 @@ export function SeriesDetailPage() {
               </a>
             )}
           </div>
+          {allEpisodes.length > 0 && <TrackSummary url={episodeRequest(profile, series, allEpisodes[nextUp ?? 0]).url} ua={profile.userAgent} />}
           <OtherVersions kind="series" item={series} />
         </div>
       </div>

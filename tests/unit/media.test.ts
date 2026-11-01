@@ -90,3 +90,11 @@ At least one output file must be specified`;
     expect(parseFfmpegInfo('http://x: Server returned 404 Not Found')).toBeNull();
   });
 });
+
+describe('language names for codes seen on the reported provider', () => {
+  it('names them and maps them to two-letter codes', async () => {
+    const { languageName, lang2 } = await import('../../shared/media');
+    expect(['per', 'nob', 'hrv', 'may', 'msa', 'kan', 'mal', 'tam', 'tel', 'fil'].map((c) => languageName(c))).toEqual(['Persian', 'Norwegian', 'Croatian', 'Malay', 'Malay', 'Kannada', 'Malayalam', 'Tamil', 'Telugu', 'Filipino']);
+    expect(['per', 'nob', 'hrv', 'msa', 'ces', 'ell'].map((c) => lang2(c))).toEqual(['fa', 'no', 'hr', 'ms', 'cs', 'el']);
+  });
+});

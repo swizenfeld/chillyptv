@@ -2,6 +2,7 @@ import type Hls from 'hls.js';
 import type { ErrorData, Level } from 'hls.js';
 import type Mpegts from 'mpegts.js';
 import { backendHealth, probe, proxied, remuxSubtitles, remuxUrl } from '../lib/api';
+import { fileTracks } from '../lib/tracks';
 import { audioLabel, lang2, subtitleLabel, type MediaProbe } from '../../shared/media';
 import { extOf } from '../lib/format';
 import type { PlayRequest } from '../lib/types';
@@ -94,16 +95,10 @@ export function planCandidates(req: PlayRequest, opts: { preferRemux: boolean; f
   return out;
 }
 
-/** ffprobe results per file URL: tracks don't change, and resuming shouldn't wait twice. */
-const fileProbes = new Map<string, Promise<MediaProbe | null>>();
+/** Waits for the file's tracks, but never longer than this before playback starts. */
+const TRACKS_WAIT_MS = 6000;
 function probeFile(url: string, ua?: string): Promise<MediaProbe | null> {
-  let p = fileProbes.get(url);
-  if (!p) {
-    p = Promise.race([probe(url, ua), new Promise<null>((r) => setTimeout(() => r(null), 8000))]);
-    fileProbes.set(url, p);
-    void p.then((r) => !r && fileProbes.delete(url));
-  }
-  return p;
+  return Promise.race([fileTracks(url, ua), new Promise<null>((r) => setTimeout(() => r(null), TRACKS_WAIT_MS))]);
 }
 
 /** Parses complete WebVTT cue blocks; returns the cues and the unparsed remainder. */
@@ -555,7 +550,7 @@ export class PlaybackEngine {
   // ------------------------------------------------------------------ tracks
   audioTracks(): TrackInfo[] {
     if (this.hls) return this.hls.audioTracks.map((t, i) => ({ id: i, label: t.name || t.lang || `Track ${i + 1}`, lang: t.lang }));
-    if (this.file && this.file.audio.length > 1) return this.file.audio.map((a) => ({ id: a.index, label: audioLabel(a), lang: a.lang }));
+    if (this.file && this.file.audio.length > 1) return this.menuOrder(this.file.audio.map((a) => ({ id: a.index, label: audioLabel(a), lang: a.lang })), this.opts.preferredAudioLang);
     const native = (this.video as HTMLVideoElement & { audioTracks?: { length: number; [i: number]: { label: string; language: string; enabled: boolean } } }).audioTracks;
     if (native && native.length > 1) {
       return Array.from({ length: native.length }, (_, i) => ({ id: i, label: native[i].label || native[i].language || `Track ${i + 1}`, lang: native[i].language }));
@@ -589,7 +584,7 @@ export class PlaybackEngine {
   subtitleTracks(): TrackInfo[] {
     if (this.hls) return this.hls.subtitleTracks.map((t, i) => ({ id: i, label: t.name || t.lang || `Subtitle ${i + 1}`, lang: t.lang }));
     // Picture subtitles (PGS, VobSub) can't be turned into text, so only text ones are offered.
-    if (this.file?.subtitles.length) return this.file.subtitles.filter((t) => t.text).map((t) => ({ id: t.index, label: subtitleLabel(t), lang: t.lang }));
+    if (this.file?.subtitles.length) return this.menuOrder(this.file.subtitles.filter((t) => t.text).map((t) => ({ id: t.index, label: subtitleLabel(t), lang: t.lang })), this.opts.preferredSubLang);
     const tt = this.video.textTracks;
     const out: TrackInfo[] = [];
     for (let i = 0; i < tt.length; i++) if (tt[i].kind === 'subtitles' || tt[i].kind === 'captions') out.push({ id: i, label: tt[i].label || tt[i].language || `Subtitle ${i + 1}`, lang: tt[i].language });
@@ -635,6 +630,21 @@ export class PlaybackEngine {
   }
 
   // ------------------------------------------------------- file tracks (VOD)
+  /**
+   * Files often carry 15–40 subtitle tracks: the preferred language comes first, then the rest
+   * alphabetically; repeated names ("English", "English") are numbered so they can be told apart.
+   */
+  private menuOrder(items: TrackInfo[], preferred?: string): TrackInfo[] {
+    const want = lang2(preferred) ?? preferred?.slice(0, 2).toLowerCase();
+    const sorted = [...items].sort((a, b) => Number(lang2(b.lang) === want) - Number(lang2(a.lang) === want) || a.label.localeCompare(b.label) || a.id - b.id);
+    const seen = new Map<string, number>();
+    return sorted.map((t) => {
+      const n = (seen.get(t.label) ?? 0) + 1;
+      seen.set(t.label, n);
+      return n > 1 ? { ...t, label: `${t.label} ${n}` } : t;
+    });
+  }
+
   /** Preferred audio language / subtitles from settings, when the file has them. */
   private pickPreferredFileTracks(): void {
     const f = this.file;

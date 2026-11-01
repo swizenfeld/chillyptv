@@ -541,9 +541,11 @@ async function main() {
     const results: { it: Item; p: MediaProbe | string }[] = [];
     if (hasProbe) {
       out(`Checked ${items.length} files with ${hasFfprobe ? 'ffprobe' : 'ffmpeg (ffprobe is not installed; ffmpeg lists the same tracks)'}, one at a time (your plan allows one connection, so nothing else should be playing). Each check reads only the start of the file.`);
+      const t0 = performance.now();
       await timed(`Track check (${items.length} files)`, async () => {
         for (const it of items) results.push({ it, p: await probeOne(it.url) });
       });
+      out(`Average time to read one file's tracks: ${((performance.now() - t0) / Math.max(1, items.length) / 1000).toFixed(1)} s (this is the wait before a movie starts when its page didn't read them first).`);
     } else {
       out('ffprobe is not installed, so only what the provider reports about each movie (usually just the first audio track) is shown. Install ffmpeg (macOS: `brew install ffmpeg`) and run again for the full picture.');
       for (const it of items.filter((x) => x.kind === 'movie')) {

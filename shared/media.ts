@@ -36,10 +36,16 @@ export interface MediaProbe {
 
 const TEXT_SUBS = new Set(['subrip', 'srt', 'ass', 'ssa', 'mov_text', 'webvtt', 'text', 'microdvd', 'subviewer', 'subviewer1', 'sami', 'realtext', 'jacosub', 'mpl2', 'pjs', 'vplayer', 'stl']);
 
+/**
+ * MKV and MP4 list every track in their header, so reading ~2 MB is enough; ffmpeg's default
+ * (5 MB plus 5 s of analysis) made each check take ~5 s on a real provider.
+ */
+const PROBE_LIMITS = ['-probesize', '2000000', '-analyzeduration', '2000000'];
+
 /** ffprobe arguments (after the binary) for one input URL. */
 export function ffprobeArgs(url: string, ua: string, protocols: string): string[] {
   return [
-    '-v', 'error', '-protocol_whitelist', protocols, '-user_agent', ua,
+    '-v', 'error', '-protocol_whitelist', protocols, '-user_agent', ua, ...PROBE_LIMITS,
     '-show_entries', 'format=duration,format_name:stream=index,codec_type,codec_name,width,height,channels:stream_tags=language,title:stream_disposition=default,forced',
     '-of', 'json', url,
   ];
@@ -93,6 +99,11 @@ const NAMES: Record<string, string> = {
   ru: 'Russian', rus: 'Russian', ja: 'Japanese', jpn: 'Japanese', ko: 'Korean', kor: 'Korean', zh: 'Chinese', chi: 'Chinese', zho: 'Chinese', ar: 'Arabic', ara: 'Arabic',
   hi: 'Hindi', hin: 'Hindi', tr: 'Turkish', tur: 'Turkish', pl: 'Polish', pol: 'Polish', sv: 'Swedish', swe: 'Swedish', da: 'Danish', dan: 'Danish', no: 'Norwegian', nor: 'Norwegian',
   fi: 'Finnish', fin: 'Finnish', el: 'Greek', gre: 'Greek', ell: 'Greek', he: 'Hebrew', heb: 'Hebrew', cs: 'Czech', cze: 'Czech', ces: 'Czech', hu: 'Hungarian', hun: 'Hungarian',
+  fa: 'Persian', per: 'Persian', fas: 'Persian', nb: 'Norwegian', nob: 'Norwegian', nno: 'Norwegian (Nynorsk)', hr: 'Croatian', hrv: 'Croatian', scr: 'Croatian',
+  sr: 'Serbian', srp: 'Serbian', bs: 'Bosnian', bos: 'Bosnian', sl: 'Slovenian', slv: 'Slovenian', sk: 'Slovak', slo: 'Slovak', slk: 'Slovak', bg: 'Bulgarian', bul: 'Bulgarian',
+  ms: 'Malay', may: 'Malay', msa: 'Malay', fil: 'Filipino', tl: 'Tagalog', tgl: 'Tagalog', kn: 'Kannada', kan: 'Kannada', ml: 'Malayalam', mal: 'Malayalam',
+  ta: 'Tamil', tam: 'Tamil', te: 'Telugu', tel: 'Telugu', bn: 'Bengali', ben: 'Bengali', ur: 'Urdu', urd: 'Urdu', et: 'Estonian', est: 'Estonian', lv: 'Latvian', lav: 'Latvian',
+  lt: 'Lithuanian', lit: 'Lithuanian', is: 'Icelandic', ice: 'Icelandic', isl: 'Icelandic', ca: 'Catalan', cat: 'Catalan', eu: 'Basque', baq: 'Basque', eus: 'Basque', gl: 'Galician', glg: 'Galician',
   ro: 'Romanian', rum: 'Romanian', ron: 'Romanian', uk: 'Ukrainian', ukr: 'Ukrainian', th: 'Thai', tha: 'Thai', vi: 'Vietnamese', vie: 'Vietnamese', id: 'Indonesian', ind: 'Indonesian',
 };
 
@@ -106,7 +117,11 @@ export function lang2(code?: string): string | undefined {
   const c = code.toLowerCase();
   const byName = Object.entries(NAMES).find(([k, v]) => k.length === 2 && v.toLowerCase() === c);
   if (byName) return byName[0];
-  const map: Record<string, string> = { eng: 'en', spa: 'es', esp: 'es', lat: 'es', por: 'pt', pob: 'pt', fre: 'fr', fra: 'fr', ger: 'de', deu: 'de', ita: 'it', dut: 'nl', nld: 'nl', rus: 'ru', jpn: 'ja', kor: 'ko', chi: 'zh', zho: 'zh', ara: 'ar' };
+  const map: Record<string, string> = {
+    eng: 'en', spa: 'es', esp: 'es', lat: 'es', por: 'pt', pob: 'pt', fre: 'fr', fra: 'fr', ger: 'de', deu: 'de', ita: 'it', dut: 'nl', nld: 'nl', rus: 'ru', jpn: 'ja', kor: 'ko',
+    chi: 'zh', zho: 'zh', ara: 'ar', per: 'fa', fas: 'fa', nob: 'no', nor: 'no', hrv: 'hr', may: 'ms', msa: 'ms', ces: 'cs', cze: 'cs', ell: 'el', gre: 'el', ron: 'ro', rum: 'ro',
+    pol: 'pl', tur: 'tr', swe: 'sv', dan: 'da', fin: 'fi', hun: 'hu', heb: 'he', tha: 'th', vie: 'vi', ind: 'id', ukr: 'uk', hin: 'hi',
+  };
   return map[c] ?? (c.length === 2 ? c : undefined);
 }
 
@@ -128,7 +143,7 @@ export function subtitleLabel(t: SubtitleTrack): string {
 
 /** Arguments for `ffmpeg` to print a file's streams (it exits with an error after printing; that's expected). */
 export function ffmpegInfoArgs(url: string, ua: string, protocols: string): string[] {
-  return ['-hide_banner', '-nostdin', '-protocol_whitelist', protocols, '-user_agent', ua, '-i', url];
+  return ['-hide_banner', '-nostdin', '-protocol_whitelist', protocols, '-user_agent', ua, ...PROBE_LIMITS, '-i', url];
 }
 
 /**
