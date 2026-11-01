@@ -2,7 +2,7 @@ import type Hls from 'hls.js';
 import type { ErrorData, Level } from 'hls.js';
 import type Mpegts from 'mpegts.js';
 import { backendHealth, probe, proxied, remuxSubtitles, remuxUrl } from '../lib/api';
-import { fileTracks } from '../lib/tracks';
+import { cancelTracks, fileTracks } from '../lib/tracks';
 import { audioLabel, lang2, subtitleLabel, type MediaProbe } from '../../shared/media';
 import { extOf } from '../lib/format';
 import type { PlayRequest } from '../lib/types';
@@ -97,8 +97,15 @@ export function planCandidates(req: PlayRequest, opts: { preferRemux: boolean; f
 
 /** Waits for the file's tracks, but never longer than this before playback starts. */
 const TRACKS_WAIT_MS = 6000;
-function probeFile(url: string, ua?: string): Promise<MediaProbe | null> {
-  return Promise.race([fileTracks(url, ua), new Promise<null>((r) => setTimeout(() => r(null), TRACKS_WAIT_MS))]);
+async function probeFile(url: string, ua?: string): Promise<MediaProbe | null> {
+  let timer: number | undefined;
+  const timedOut = new Promise<'timeout'>((r) => (timer = window.setTimeout(() => r('timeout'), TRACKS_WAIT_MS)));
+  const r = await Promise.race([fileTracks(url, ua, { claim: true }), timedOut]);
+  window.clearTimeout(timer);
+  if (r !== 'timeout') return r;
+  // Give up on the tracks, and stop the read so playback gets the provider connection.
+  cancelTracks(url);
+  return null;
 }
 
 /** Parses complete WebVTT cue blocks; returns the cues and the unparsed remainder. */

@@ -151,6 +151,7 @@ async function main() {
   let seriesItems: Record<string, unknown>[] = [];
   let vodCatName = new Map<string, string>();
   let api: ((q?: Record<string, string>) => string) | null = null;
+  let busy = false;
   let epgUrls: string[] = [];
   let timezone: string | undefined;
 
@@ -180,6 +181,11 @@ async function main() {
       ['Server timezone', timezone ?? '?'],
       ['Login time', `${acct.ms} ms`],
     ]);
+    busy = Number(ui.active_cons) > 0 && Number(ui.active_cons) >= Number(ui.max_connections);
+    if (busy) {
+      out(`> **Something was playing on this account during the check** (${ui.active_cons} of ${ui.max_connections} connections in use). Downloads and the movie checks below wait for or are refused by the provider, so their times are not representative. Stop playback on every device and run it again.`);
+      out();
+    }
 
     const get = async (action: string) => {
       const r = await timed(action, () => getText(xapi({ action }), 120_000));
@@ -545,6 +551,7 @@ async function main() {
       await timed(`Track check (${items.length} files)`, async () => {
         for (const it of items) results.push({ it, p: await probeOne(it.url) });
       });
+      if (busy) out('(Another stream was using the account during this check, so the times below are inflated.)');
       out(`Average time to read one file's tracks: ${((performance.now() - t0) / Math.max(1, items.length) / 1000).toFixed(1)} s (this is the wait before a movie starts when its page didn't read them first).`);
     } else {
       out('ffprobe is not installed, so only what the provider reports about each movie (usually just the first audio track) is shown. Install ffmpeg (macOS: `brew install ffmpeg`) and run again for the full picture.');

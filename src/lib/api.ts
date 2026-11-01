@@ -93,11 +93,11 @@ export async function remuxSubtitles(sid: string, from: number): Promise<{ text:
 
 export type ProbeResult = MediaProbe;
 
-export async function probe(url: string, ua?: string): Promise<ProbeResult | null> {
+export async function probe(url: string, ua?: string, signal?: AbortSignal): Promise<ProbeResult | null> {
   if (!health?.ffmpeg) return null;
   const p = upstreamParams(url, { ua });
   try {
-    const res = await fetch(`${API}/probe?${p}`);
+    const res = await fetch(`${API}/probe?${p}`, { signal });
     return res.ok ? ((await res.json()) as ProbeResult) : null;
   } catch {
     return null;

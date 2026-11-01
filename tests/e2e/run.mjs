@@ -341,6 +341,27 @@ await step('movie tracks: other language version, audio switch, subtitles', asyn
   await page.keyboard.press('Escape');
 });
 
+await step('one-connection plans: a slow track read is stopped before playback opens', async () => {
+  // Movie 5004's next request hangs for 9 s, so the track read outlasts the player's 6 s wait.
+  await fetch(`${MOCK}/__mock/slow?id=5004`);
+  const t0 = Date.now();
+  await page.goto(`${APP}/movies/5004`);
+  // Leave the page at once (as if skipping it), then play straight from the list: no read is ready.
+  await page.goto(`${APP}/movies`);
+  await page.goto(`${APP}/movies/5004`);
+  await page.getByRole('button', { name: /^Play$/ }).click();
+  await page.waitForURL(/\/play/);
+  await playing('.player-full video', 2, 40000);
+  const { requests } = await (await fetch(`${MOCK}/__mock/conns?id=5004`)).json();
+  const reads = requests.filter((r) => r.by === 'ffmpeg' && r.start >= t0 - 1000);
+  const plays = requests.filter((r) => r.by === 'player' && r.start >= t0 - 1000);
+  if (!reads.length || !plays.length) throw new Error(`expected a track read and playback, got ${JSON.stringify(requests)}`);
+  for (const p of plays) for (const r of reads) {
+    if (p.start > r.start && (r.end === 0 || p.start < r.end - 50)) throw new Error(`playback opened while a track read was still open: ${JSON.stringify({ read: r, play: p })}`);
+  }
+  await page.keyboard.press('Escape');
+});
+
 await step('MPEG-TS live via mpegts.js', async () => {
   await page.evaluate(async () => {
     const raw = JSON.parse(localStorage.getItem('chilly.profiles'));

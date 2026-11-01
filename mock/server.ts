@@ -474,6 +474,14 @@ function xmltv(_req: IncomingMessage, res: ServerResponse) {
   res.end(out.join('\n'));
 }
 
+const slowOnce = new Set<number>();
+const movieConns = new Map<number, { active: number; max: number; requests: { by: string; start: number; end: number }[] }>();
+
+function serveMovie(req: IncomingMessage, res: ServerResponse, m: RegExpMatchArray): void {
+  if (MULTI_IDS.has(Number(m[1]))) return serveFile(req, res, join(MEDIA, 'movie-multi.mkv'), 'video/x-matroska');
+  return m[2] === 'mkv' ? serveFile(req, res, join(MEDIA, 'movie-ac3.mkv'), 'video/x-matroska') : serveFile(req, res, join(MEDIA, 'movie.mp4'), 'video/mp4');
+}
+
 const server = createServer((req, res) => {
   const url = new URL(req.url ?? '/', base(req));
   const p = url.pathname;
@@ -489,6 +497,16 @@ const server = createServer((req, res) => {
     const id = +m[2];
     const name = movies.find((x) => x.id === id)?.name ?? series.find((x) => x.id === id)?.name ?? 'Show';
     return m[1] === 'poster' ? svg(res, name, (id * 29) % 360, 300, 450) : svg(res, name, (id * 29) % 360, 1280, 720);
+  }
+  // Test hooks for one-connection plans: /__mock/slow?id=N delays movie N's next request by 9 s;
+  // /__mock/conns?id=N reports how many requests for movie N were open at once (most and now).
+  if (p === '/__mock/slow') {
+    slowOnce.add(Number(url.searchParams.get('id')));
+    return json(res, { ok: true });
+  }
+  if (p === '/__mock/conns') {
+    const c = movieConns.get(Number(url.searchParams.get('id'))) ?? { active: 0, max: 0, requests: [] };
+    return json(res, c);
   }
   // Test hook: /__mock/kill?id=12 makes channel 12 fail (playlist and stream), &on=0 revives it.
   if (p === '/__mock/kill') {
@@ -512,8 +530,26 @@ const server = createServer((req, res) => {
   if (m && killed.has(url.searchParams.get('token') ?? '')) return res.writeHead(503).end();
   if (m) return serveFile(req, res, join(MEDIA, `hls-${m[1]}`, m[2]), m[2].endsWith('.m3u8') ? 'application/vnd.apple.mpegurl' : 'video/mp2t');
   m = p.match(/^\/movie\/[^/]+\/[^/]+\/(\d+)\.(\w+)$/);
-  if (m && MULTI_IDS.has(Number(m[1]))) return serveFile(req, res, join(MEDIA, 'movie-multi.mkv'), 'video/x-matroska');
-  if (m) return m[2] === 'mkv' ? serveFile(req, res, join(MEDIA, 'movie-ac3.mkv'), 'video/x-matroska') : serveFile(req, res, join(MEDIA, 'movie.mp4'), 'video/mp4');
+  if (m) {
+    const id = Number(m[1]);
+    const c = movieConns.get(id) ?? movieConns.set(id, { active: 0, max: 0, requests: [] }).get(id)!;
+    c.active++;
+    c.max = Math.max(c.max, c.active);
+    // ffmpeg/ffprobe (track reads, server remux) send Icy-MetaData; the browser's playback doesn't.
+    const r = { by: req.headers['icy-metadata'] ? 'ffmpeg' : 'player', start: Date.now(), end: 0 };
+    c.requests.push(r);
+    res.on('close', () => {
+      c.active--;
+      r.end = Date.now();
+    });
+    if (slowOnce.delete(id)) {
+      const mm = m;
+      const t = setTimeout(() => serveMovie(req, res, mm), 9000);
+      res.on('close', () => clearTimeout(t));
+      return;
+    }
+    return serveMovie(req, res, m);
+  }
   m = p.match(/^\/series\/[^/]+\/[^/]+\/(\d+)\.(\w+)$/);
   if (m) return serveFile(req, res, join(MEDIA, 'episode.mp4'), 'video/mp4');
   // Xtream timeshift: /timeshift/{user}/{pass}/{duration}/{YYYY-MM-DD:HH-MM}/{id}.ts

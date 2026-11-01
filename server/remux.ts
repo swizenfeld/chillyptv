@@ -105,29 +105,55 @@ function hasFfprobe(): boolean {
 }
 
 /** Tracks per file URL. A file's tracks don't change, and reading them costs a provider connection. */
-const probeCache = new Map<string, { at: number; result: Promise<MediaProbe | null> }>();
+interface ProbeEntry {
+  at: number;
+  result: Promise<MediaProbe | null>;
+  /** Requests still waiting for a read in progress; at 0 the read is stopped. */
+  waiters: number;
+  done: boolean;
+  kill: () => void;
+}
+const probeCache = new Map<string, ProbeEntry>();
 const PROBE_TTL = 12 * 3_600_000;
 
-/** Tracks for a file: cached, and a read already in flight (e.g. started by the movie page) is shared. */
-export function probeMedia(url: string, ua: string): Promise<MediaProbe | null> {
-  const hit = probeCache.get(url);
-  if (hit && Date.now() - hit.at < PROBE_TTL) return hit.result;
-  const result = runProbe(url, ua);
-  probeCache.set(url, { at: Date.now(), result });
-  void result.then((r) => {
-    if (!r) probeCache.delete(url); // failures are retried next time
-    if (probeCache.size > 2000) probeCache.delete(probeCache.keys().next().value!);
-  });
-  return result;
+/**
+ * Tracks for a file: cached, and a read already in flight (e.g. started by the movie page) is shared.
+ * When every caller has given up (`signal`), the read is stopped: on a one-connection plan a read
+ * nobody waits for would block the stream the player is about to open.
+ */
+export function probeMedia(url: string, ua: string, signal?: AbortSignal): Promise<MediaProbe | null> {
+  let entry = probeCache.get(url);
+  if (!entry || (entry.done && Date.now() - entry.at > PROBE_TTL)) {
+    const run = runProbe(url, ua);
+    const e: ProbeEntry = { at: Date.now(), result: run.result, waiters: 0, done: false, kill: run.kill };
+    entry = e;
+    probeCache.set(url, e);
+    void run.result.then((r) => {
+      e.done = true;
+      if (!r && probeCache.get(url) === e) probeCache.delete(url); // failures are retried next time
+      if (probeCache.size > 2000) probeCache.delete(probeCache.keys().next().value!);
+    });
+  }
+  if (entry.done || !signal) return entry.result;
+  const e = entry;
+  e.waiters++;
+  signal.addEventListener('abort', () => {
+    e.waiters--;
+    if (e.waiters <= 0 && !e.done) {
+      e.kill();
+      if (probeCache.get(url) === e) probeCache.delete(url);
+    }
+  }, { once: true });
+  return e.result;
 }
 
-/** Runs ffprobe (or ffmpeg -i when ffprobe is missing) and resolves the tracks, or null. */
-function runProbe(url: string, ua: string, timeoutMs = 20000): Promise<MediaProbe | null> {
+/** Runs ffprobe (or ffmpeg -i when ffprobe is missing); resolves the tracks, or null. */
+function runProbe(url: string, ua: string, timeoutMs = 20000): { result: Promise<MediaProbe | null>; kill: () => void } {
   const viaProbe = hasFfprobe();
   const child = viaProbe
     ? spawn(ffprobeBin(), ffprobeArgs(url, ua, SAFE_PROTOCOLS), { stdio: ['ignore', 'pipe', 'ignore'] })
     : spawn(ffmpegPath(), ffmpegInfoArgs(url, ua, SAFE_PROTOCOLS), { stdio: ['ignore', 'ignore', 'pipe'] });
-  return new Promise((resolve) => {
+  const result = new Promise<MediaProbe | null>((resolve) => {
     let out = '';
     (viaProbe ? child.stdout! : child.stderr!).on('data', (d: Buffer) => (out += d.toString()));
     const timer = setTimeout(() => child.kill('SIGKILL'), timeoutMs);
@@ -141,6 +167,7 @@ function runProbe(url: string, ua: string, timeoutMs = 20000): Promise<MediaProb
       }
     });
   });
+  return { result, kill: () => child.exitCode === null && child.kill('SIGKILL') };
 }
 
 /** Container duration, codecs, and audio/subtitle tracks (shared/media.ts). */
@@ -153,7 +180,11 @@ export async function handleProbe(_req: IncomingMessage, res: ServerResponse, pa
   } catch (e) {
     return sendError(res, 403, (e as Error).message);
   }
-  const probe = await probeMedia(url, userAgentFrom(params));
+  // A client that stops waiting (player gave up, page left) closes the request; the read stops with it.
+  const gone = new AbortController();
+  res.on('close', () => !res.writableEnded && gone.abort());
+  const probe = await probeMedia(url, userAgentFrom(params), gone.signal);
+  if (gone.signal.aborted) return;
   if (probe) sendJson(res, 200, probe);
   else sendError(res, 502, 'Probe failed');
 }
