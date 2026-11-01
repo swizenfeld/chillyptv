@@ -41,6 +41,8 @@ const REGION_LANG: Record<string, string> = {
 
 /** Explicit language words in a name win over the region. Keys are lower-case, accent-free. */
 const LANG_WORDS: [RegExp, string][] = [
+  // Spanish-language networks, wherever they're listed ("US| ESPN DEPORTES", "US| TELEMUNDO (KNSO) FRESNO").
+  [/\b(deportes|telemundo|univision|unimas|galavision|tudn|vix|estrella tv|azteca|canal de las estrellas)\b/, 'es'],
   // Not "esp": "Levante vs. Atlético (ESP)" names the league's country, not the commentary.
   [/\b(espanol|castellano|spanish|latino|spa)\b/, 'es'],
   [/\b(english|eng)\b/, 'en'],

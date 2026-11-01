@@ -37,6 +37,7 @@ interface EpgState {
 }
 
 let resolver: GuideResolver | null = null;
+let loadGeneration = 0;
 // Keyed by channel id; the channel object is kept so a playlist refresh (new event names) recomputes.
 const resolvedCache = new Map<string, { ch: Channel; list: Programme[] }>();
 
@@ -151,6 +152,9 @@ export const useEpg = create<EpgState>()((set, get) => ({
       return;
     }
     set({ status: current ? 'ready' : 'loading', error: null });
+    // Only the newest download may land: an older one (started before a guide channel was linked
+    // by hand) finishing last would drop that channel's listings.
+    const gen = ++loadGeneration;
     try {
       let merged: EpgData | null = null;
       const sources: EpgSourceStatus[] = [];
@@ -163,13 +167,13 @@ export const useEpg = create<EpgState>()((set, get) => ({
           sources.push({ url, ok: false, channels: 0, error: (e as Error).message });
         }
       }
-      if (get().profileId !== profile.id) return;
+      if (get().profileId !== profile.id || gen !== loadGeneration) return;
       if (!merged) throw new Error(sources.find((x) => x.error)?.error ?? 'EPG unavailable');
       buildResolver(merged);
       await idbSet(`epg:${profile.id}`, merged).catch(() => {});
       set({ data: merged, status: 'ready', error: null, sources, version: get().version + 1 });
     } catch (e) {
-      if (get().profileId !== profile.id) return;
+      if (get().profileId !== profile.id || gen !== loadGeneration) return;
       set({ status: current ? 'ready' : 'error', error: (e as Error).message });
     }
   },

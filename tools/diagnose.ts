@@ -330,11 +330,14 @@ async function main() {
     out();
     const fmt = (t: number) => new Date(t).toISOString().slice(5, 16).replace('T', ' ');
     for (const { c, e } of fromName.filter((_, i) => i % Math.max(1, Math.floor(fromName.length / 15)) === 0).slice(0, 15)) out(`- ${fmt(e!.start)} UTC · ${e!.title} ← \`${c.name}\``);
-    const skipped = uncovered.filter((c) => c.tags.event !== 'idle' && /\|/.test(c.name) && /\s(vs?\.?|x)\s/i.test(c.name) && !eventListing(c.name));
+    // Finished slots without a time ("End | … | 00:00 (GMT)") need no listing; anything else here is a miss.
+    const skipped = uncovered.filter((c) => !c.tags.event && /\|/.test(c.name) && /\s(vs?\.?|x|-)\s/i.test(c.name) && !eventListing(c.name));
+    const endedNoTime = uncovered.filter((c) => c.tags.event === 'ended' && !eventListing(c.name)).length;
+    if (endedNoTime) out(`(${endedNoTime.toLocaleString()} finished event slots carry no time and get no listing; that's expected.)`);
     if (skipped.length) {
       out();
       out(`Event-looking names that produced no listing (${skipped.length}), samples:`);
-      for (const c of skipped.slice(0, 10)) out(`- \`${c.name}\``);
+      for (const c of skipped.filter((_, i) => i % Math.max(1, Math.floor(skipped.length / 15)) === 0).slice(0, 15)) out(`- \`${c.name}\``);
     }
     out();
   }

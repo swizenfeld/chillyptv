@@ -16,6 +16,8 @@ export interface EventListing {
   category?: string;
 }
 
+import { parseChannelTags } from './channels.js';
+
 const MONTHS: Record<string, number> = { jan: 0, feb: 1, mar: 2, apr: 3, may: 4, jun: 5, jul: 6, aug: 7, sep: 8, oct: 9, nov: 10, dec: 11 };
 /** UTC offsets (hours) for zone abbreviations event names use. */
 const ABBR: Record<string, number> = {
@@ -96,9 +98,23 @@ function parseStart(name: string, now: number): number | undefined {
   return undefined;
 }
 
-const VERSUS = /\s(?:vs?\.?|x|@)\s/i;
+const VERSUS = /\s(?:vs?\.?|x|@|-|–)\s/i;
+const MONTH = '(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?';
 
-const UPPER = new Set(['fc', 'cf', 'ud', 'sc', 'ac', 'cd', 'afc', 'rcd', 'sd', 'usa', 'nyc', 'lafc', 'psg', 'ii', 'u15', 'u17', 'u19', 'u20', 'u21', 'u23', 'nfl', 'nba', 'nhl', 'mlb', 'mls', 'ufc', 'wwe']);
+/** Segments of "STATUS | EVENT | DATE | LABEL | PROVIDER SLOT" names that are not the event. */
+const NOT_EVENT: RegExp[] = [
+  /^\W*(live|end|ended|finished|final|upcoming|soon|next|en vivo|en directo)\W*$/i, // status
+  new RegExp(`^(?:(?:mon|tue|wed|thu|fri|sat|sun)[a-z]*\\.?\\s+)?(?:\\d{1,2}\\s+${MONTH}|${MONTH}\\s+\\d{1,2})\\b`, 'i'), // "Sat 31 Oct 13:00 EDT"
+  /^\d{1,2}[-/.]\d{1,2}[-/.]\d{2,4}$/, // "31-10-2026"
+  /^\d{1,2}:\d{2}\b/, // "00:00 (GMT)"
+  /^(all|tbd|tba)$/i,
+  /\bexclusive\b/i, // "8K EXCLUSIVE"
+  /^(?:[A-Z]{2,4}\s*:\s*)?[\w+ .&'-]*\b(?:PPV|EVENTS?)\s*\d+\s*$/i, // "US: ESPN+ PPV 6"
+  /^\s*(?:[A-Z]{2,4}\s*)?(?:\([^)]*\)\s*)+[\w+]*\s*\d*\s*$/, // "US (ESPN+ 166)", "(Apple) (MLS) 002"
+  /^[A-Z]{2,4}$/, // "LAT"
+];
+
+const UPPER = new Set(['fc', 'cf', 'ud', 'sc', 'ac', 'cd', 'afc', 'rcd', 'sd', 'usa', 'nyc', 'ny', 'dc', 'lafc', 'psg', 'ii', 'iii', 'nfl', 'nba', 'nhl', 'mlb', 'mls', 'ufc', 'wwe', 'ncaa', 'unc', 'ucla', 'usc', 'lsu', 'tcu', 'byu', 'smu', 'ucf', 'uconn', 'utep', 'aek', 'psv', 'az']);
 const LOWER = new Set(['de', 'del', 'la', 'las', 'los', 'el', 'y', 'of', 'the', 'and', 'vs', 'v', 'at']);
 
 /** "LEVANTE UD VS. ATLÉTICO DE MADRID" → "Levante UD vs. Atlético de Madrid"; mixed case is left alone. */
@@ -106,31 +122,40 @@ function titleCase(s: string): string {
   if (/[a-z]/.test(s)) return s;
   let first = true;
   return s.toLowerCase().replace(/[\p{L}\p{N}]+/gu, (w) => {
-    const out = UPPER.has(w) ? w.toUpperCase() : LOWER.has(w) && !first ? w : w[0].toUpperCase() + w.slice(1);
+    const out = UPPER.has(w) || /^u\d{2}$/.test(w) ? w.toUpperCase() : LOWER.has(w) && !first ? w : w[0].toUpperCase() + w.slice(1);
     first = false;
     return out;
   });
 }
 
+/** FloSports-style sport prefixes ("fc:", "hockey:"). */
+const SPORT_PREFIX: Record<string, string> = { fc: 'Soccer', soccer: 'Soccer', mbb: "Men's Basketball", wbb: "Women's Basketball" };
+
 /** The event's title from the name, cleaned of slot numbers, dates and labels. */
 export function eventTitle(name: string): string | undefined {
   let text = name;
   // "Serie A: Bologna vs Monza @ Oct 31 9:50 AM :Paramount+ 05" → before the "@ date".
-  const at = text.match(/^(.*?)\s@\s*(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)/i);
+  const at = text.match(new RegExp(`^(.*?)\\s@\\s*${MONTH}`, 'i'));
   if (at) text = at[1];
-  const segments = text.split('|').map((s) => s.trim());
-  let seg = segments.find((s) => VERSUS.test(` ${s} `)) ?? segments.find((s) => /:\s*\S/.test(s) && !/^\s*(?:[A-Z]{2,4}:\s*)?[\w+ ]*(PPV|EVENTS?)\s*\d+\s*$/i.test(s) && s.length > 12 && segments.length > 1);
+  const segments = text.split('|').map((s) => s.trim()).filter((s) => s && !NOT_EVENT.some((re) => re.test(s)));
+  let seg = segments.find((s) => VERSUS.test(` ${s} `)) ?? segments.find((s) => /\p{L}{3}/u.test(s) && s.length >= 8);
   if (!seg) return undefined;
   seg = seg
     .replace(/\(\d{4}-\d{2}-\d{2}[^)]*\)/g, ' ') // "(2026-10-31 14:03:05)"
-    .replace(/\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+\d{1,2}\s+\d{1,2}:\d{2}\s*([AP]M)?\s*([A-Z]{2,4})?\b.*$/i, ' ') // "Oct 31 2:00PM ET"
+    .replace(new RegExp(`\\b${MONTH}\\s+\\d{1,2}\\s+\\d{1,2}:\\d{2}\\s*([AP]M)?\\s*([A-Z]{2,4})?\\b.*$`, 'i'), ' ') // "Oct 31 2:00PM ET"
     .replace(/\s\d{1,2}:\d{2}\s*([AP]M)?\s*$/i, ' ') // trailing "20:00"
     .replace(/^[^:]*\b(PPV|EVENTS?)\s*\d+\s*:\s*/i, '') // "LAT| ARG FANATIZ PPV 3: "
     .replace(/^\s*(?:EN ESPA[NÑ]OL|IN ENGLISH)\s*[-–:]\s*/i, '') // "EN ESPAÑOL-LEVANTE…"
+    .replace(/(?<=[^\s:])\s{2,}(?=\S)/g, ' · ') // STAN: "Bournemouth v Leeds United  Premier League Matchweek 9"
+    .replace(/\s+(?:Matchweek|Matchday|Round|Jornada|Fecha)\s+\d+\s+\d{4}\/\d{2,4}\s*$/i, '') // "… Matchweek 9 2026/2027"
+    .replace(/\s_\s/g, ' · ') // FloSports "Molloy vs Queens _ Women`s"
+    .replace(/`/g, '’')
     .replace(/\s{2,}/g, ' ')
     .trim();
   // "Soccer: Levante vs. Atlético Madrid (Levante vs. Atlético de Madrid (ESP))" → drop the repeat.
   seg = seg.replace(/\s*\((?:[^()]|\([^()]*\))*\bvs?\.?\s(?:[^()]|\([^()]*\))*\)\s*$/i, '').trim();
+  // "hockey: Winnipeg …" → "Hockey: Winnipeg …"; "fc:" is FloSports' soccer.
+  seg = seg.replace(/^([a-z][a-z ]{1,20}):\s*/, (_, sport: string) => `${SPORT_PREFIX[sport] ?? sport[0].toUpperCase() + sport.slice(1)}: `);
   if (seg.length < 5 || /no event/i.test(seg)) return undefined;
   return titleCase(seg);
 }
@@ -140,8 +165,11 @@ export function eventListing(name: string, now = Date.now()): EventListing | und
   if (!name.includes('|') && !/@\s*(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)|PPV\s*\d+\s*:/i.test(name)) return undefined;
   const title = eventTitle(name);
   if (!title) return undefined;
-  const start = parseStart(name, now);
-  if (start === undefined) return undefined;
+  let start = parseStart(name, now);
+  // A live slot without a time ("Live | Sporting KC vs. FC Dallas | all | …") is on now.
+  if (start === undefined && parseChannelTags(name).event === 'live') start = Math.floor(now / 900_000) * 900_000 - 900_000;
+  // Ignore stale or far-off dates ("Mon 23 Mar" in October): placeholders, not schedules.
+  if (start === undefined || start < now - 2 * 86_400_000 || start > now + 30 * 86_400_000) return undefined;
   const cat = title.match(/^([\p{L} ]{3,30}):\s/u)?.[1];
   return { title, start, end: start + DURATION, ...(cat ? { category: cat } : {}) };
 }
