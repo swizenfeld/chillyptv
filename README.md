@@ -65,6 +65,45 @@ npm run mock            # optional fake provider on :8788 (user demo / pass demo
 
 The mock provider generates real test streams with ffmpeg: about 230 live channels (HLS and TS), movies (MP4 and an MKV with AC3 audio), series, XMLTV, catch-up and an M3U export. You can develop and test without a real subscription.
 
+## Fire TV / Android app
+
+The same app runs on Fire TV sticks (Fire OS) and Android TV boxes **without the ChillyPTV server**.
+The Android app talks to the provider directly. A native player (ExoPlayer) handles HLS, MPEG-TS, MP4 and MKV, Dolby audio, and every subtitle type.
+The remote controls everything.
+
+### Install on a Fire TV Stick
+
+1. Turn on installing from unknown sources: **Settings → My Fire TV → Developer options → Install unknown apps → Downloader → On**.
+   If Developer options is missing, open **Settings → My Fire TV → About** and click the device name seven times.
+2. Install the **Downloader** app from the Amazon Appstore.
+3. In Downloader, open `https://github.com/swizenfeld/chillyptv/releases/download/firestick-latest/ChillyPTV.apk` and install it.
+4. ChillyPTV appears under **Apps**. Newer builds install over the old one through the same link.
+
+### Remote
+
+| Where | Key | Does |
+|---|---|---|
+| Anywhere | Arrows / OK | move and open |
+| Anywhere | Back | closes a dialog or menu, else goes back; leaves the app from Home |
+| Live TV player | Up / Down (or Channel +/−) | changes channel |
+| Live TV player | OK | shows the controls |
+| Movies and episodes | Left / Right | skip 10 s back / 30 s ahead |
+| Movies and episodes | OK | shows the controls, with audio and subtitle choices |
+
+These need the server, so they aren't in the app: recordings, Multi-View, and the preview video in the channel list.
+Only one stream plays at a time, which suits one-connection plans.
+
+### Building it
+
+The [Fire TV APK workflow](.github/workflows/firetv-apk.yml) builds the APK on every push and publishes it to the `firestick-latest` release.
+
+To build it yourself you need JDK 21 and the Android SDK (platform 36). Then:
+
+```bash
+npm run build && npx cap sync android && (cd android && ./gradlew assembleDebug)
+# → android/app/build/outputs/apk/debug/app-debug.apk
+```
+
 ## Why there is a server
 
 Browsers cannot talk to most IPTV providers directly: providers serve plain `http://` without CORS headers, and some require a specific User-Agent. The bundled server (zero runtime dependencies, Node ≥ 20) provides:
