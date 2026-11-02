@@ -296,6 +296,22 @@ async function main() {
     }
   }
   out();
+  // With no guide file, the app asks the provider per channel (get_short_epg). Does that still work?
+  if (!Object.keys(epg.programmes).length && api) {
+    const sample = channels.filter((c) => c.epgId && !c.tags.event).filter((_, i, a) => i % Math.max(1, Math.floor(a.length / 5)) === 0).slice(0, 5);
+    let withListings = 0;
+    for (const c of sample) {
+      try {
+        const r = await getText(api({ action: 'get_short_epg', stream_id: c.id, limit: '4' }), 15_000);
+        const list = (JSON.parse(r.text) as { epg_listings?: unknown[] }).epg_listings ?? [];
+        if (list.length) withListings++;
+      } catch {
+        /* counts as none */
+      }
+    }
+    out(`**Per-channel listings while the guide file is down:** ${withListings} of ${sample.length} sampled channels answered with listings${withListings ? ' (the app falls back to these for the channel you watch)' : ' (the provider\'s guide seems to be down altogether)'}.`);
+    out();
+  }
   // Same resolution as the app: guide id, exact name, then cleaned base name.
   const size = (id: string) => epg.programmes[id]?.length ?? 0;
   const rById = new Map<string, string>();

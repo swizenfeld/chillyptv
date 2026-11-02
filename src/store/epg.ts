@@ -22,6 +22,32 @@ export interface EpgSourceStatus {
   error?: string;
 }
 
+export interface GuideOutage {
+  since: number;
+  error: string;
+}
+
+const outageKey = (profileId: string) => `chilly.guideOutage.${profileId}`;
+function readOutage(profileId: string): GuideOutage | null {
+  try {
+    return JSON.parse(localStorage.getItem(outageKey(profileId)) ?? 'null') as GuideOutage | null;
+  } catch {
+    return null;
+  }
+}
+function writeOutage(profileId: string, o: GuideOutage | null): void {
+  try {
+    if (o) localStorage.setItem(outageKey(profileId), JSON.stringify(o));
+    else localStorage.removeItem(outageKey(profileId));
+  } catch {
+    /* private mode */
+  }
+}
+
+/** While the guide is down, try again this often (and on every app start). */
+const OUTAGE_RETRY_MS = 60 * 60 * 1000;
+let lastAttempt = 0;
+
 interface EpgState {
   profileId: string | null;
   data: EpgData | null;
@@ -30,6 +56,8 @@ interface EpgState {
   version: number;
   /** Result of the last download, per guide source. */
   sources: EpgSourceStatus[];
+  /** Set while the guide can't be downloaded: since when, and why. Cleared by the next success. */
+  outage: GuideOutage | null;
   /** Forget resolved channel → guide links (after a manual fix). */
   invalidate: () => void;
   /** `force` re-downloads on the server too; `refetch` only skips the "still fresh" check. */
@@ -85,7 +113,10 @@ function guideWants(profile: Profile, catalog: Catalog): { wants: GuideWant[]; k
   };
 }
 
-async function downloadEpg(url: string, profile: Profile, catalog: Catalog, force: boolean): Promise<EpgData> {
+/** A guide plus, when the server could only serve its last good copy, why the refresh failed. */
+type Download = EpgData & { staleError?: string };
+
+async function downloadEpg(url: string, profile: Profile, catalog: Catalog, force: boolean): Promise<Download> {
   const s = useSettings.getState();
   const { wants, keep } = guideWants(profile, catalog);
   if (proxyActive() && backendHealth()?.ok) {
@@ -98,7 +129,10 @@ async function downloadEpg(url: string, profile: Profile, catalog: Catalog, forc
       const body = await res.json().catch(() => ({}));
       throw new Error((body as { error?: string }).error ?? `EPG HTTP ${res.status}`);
     }
-    return (await res.json()) as EpgData;
+    const data = (await res.json()) as Download;
+    const stale = res.headers.get('X-Guide-Error');
+    if (stale) data.staleError = stale;
+    return data;
   }
   const text = await fetchUpstreamText(url, { ua: profile.userAgent });
   const now = Date.now();
@@ -120,6 +154,7 @@ export const useEpg = create<EpgState>()((set, get) => ({
   error: null,
   version: 0,
   sources: [],
+  outage: null,
   invalidate: () => {
     resolvedCache.clear();
     set({ version: get().version + 1 });
@@ -130,7 +165,8 @@ export const useEpg = create<EpgState>()((set, get) => ({
       resolver = null;
       resolvedCache.clear();
       xtreamCache.clear();
-      set({ profileId: profile.id, data: null, status: 'loading', error: null, version: get().version + 1 });
+      set({ profileId: profile.id, data: null, status: 'loading', error: null, version: get().version + 1, outage: readOutage(profile.id) });
+      lastAttempt = 0;
       const cached = await idbGet<EpgData>(`epg:${profile.id}`).catch(() => undefined);
       if (get().profileId !== profile.id) return;
       if (cached) {
@@ -144,7 +180,11 @@ export const useEpg = create<EpgState>()((set, get) => ({
       const k = resolveGuideKey(ch);
       return !!k && !current.programmes[k] && (current.counts![k] ?? 0) > 0;
     });
-    if (current && !opts.force && !opts.refetch && Date.now() - current.fetchedAt < STALE_MS && !missing()) return;
+    const fresh = current && Date.now() - current.fetchedAt < STALE_MS && !missing();
+    // During an outage the saved copy may still be "fresh", but the provider is retried hourly.
+    const retryDue = !!get().outage && Date.now() - lastAttempt > OUTAGE_RETRY_MS;
+    if (!opts.force && !opts.refetch && ((fresh && !retryDue) || (get().outage && !retryDue && lastAttempt))) return;
+    lastAttempt = Date.now();
     // Provider guide first; extra sources only fill channels it lacks.
     const urls = [...new Set([...catalog.epgUrls, ...(profile.extraEpgUrls ?? [])].map((u) => u.trim()).filter(Boolean))];
     if (!urls.length) {
@@ -160,23 +200,34 @@ export const useEpg = create<EpgState>()((set, get) => ({
       const sources: EpgSourceStatus[] = [];
       for (const url of urls.slice(0, 8)) {
         try {
-          const d = await downloadEpg(url, profile, catalog, !!opts.force);
-          merged = merged ? merge(merged, d) : d;
-          sources.push({ url, ok: true, channels: Object.keys(d.counts ?? d.programmes).length });
+          const d = await downloadEpg(url, profile, catalog, !!opts.force || retryDue);
+          const { staleError, ...guide } = d;
+          merged = merged ? merge(merged, guide) : guide;
+          // A last-good copy keeps the listings but still counts as the source being down.
+          sources.push({ url, ok: !staleError, channels: Object.keys(d.counts ?? d.programmes).length, ...(staleError ? { error: staleError } : {}) });
         } catch (e) {
           sources.push({ url, ok: false, channels: 0, error: (e as Error).message });
         }
       }
       if (get().profileId !== profile.id || gen !== loadGeneration) return;
-      if (!merged) throw new Error(sources.find((x) => x.error)?.error ?? 'EPG unavailable');
+      if (!merged) {
+        set({ sources });
+        throw new Error(sources.find((x) => x.error)?.error ?? 'EPG unavailable');
+      }
       // Resolver and data must change together: a render in between would resolve against the
       // new guide's keys but read the old guide's listings, and cache an empty list.
       buildResolver(merged);
-      set({ data: merged, status: 'ready', error: null, sources, version: get().version + 1 });
+      // The provider's own guide is the first source; extra sources alone don't end an outage.
+      const providerOk = sources[0]?.ok ?? true;
+      const outage = providerOk ? null : (get().outage ?? { since: Date.now(), error: sources[0].error ?? 'unavailable' });
+      writeOutage(profile.id, outage);
+      set({ data: merged, status: 'ready', error: null, sources, version: get().version + 1, outage });
       await idbSet(`epg:${profile.id}`, merged).catch(() => {});
     } catch (e) {
       if (get().profileId !== profile.id || gen !== loadGeneration) return;
-      set({ status: current ? 'ready' : 'error', error: (e as Error).message });
+      const outage = get().outage ?? { since: Date.now(), error: (e as Error).message };
+      writeOutage(profile.id, outage);
+      set({ status: current ? 'ready' : 'error', error: (e as Error).message, outage });
     }
   },
 }));

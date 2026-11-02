@@ -9,6 +9,8 @@ interface CacheEntry {
   at: number;
   data: EpgData | null;
   promise?: Promise<EpgData>;
+  /** The last refresh failed; `data` is the last good copy. Sent as X-Guide-Error. */
+  error?: string;
 }
 
 const TTL_MS = Number(process.env.CHILLY_EPG_TTL_MIN ?? 180) * 60_000;
@@ -89,7 +91,7 @@ export async function serveEpg(req: IncomingMessage, res: ServerResponse, params
   if (force || !entry?.data || Date.now() - entry.at > TTL_MS) {
     if (!entry?.promise) {
       const promise = fetchXmltv(url, ua, { pastDays, futureDays });
-      entry = { at: entry?.at ?? 0, data: entry?.data ?? null, promise };
+      entry = { at: entry?.at ?? 0, data: entry?.data ?? null, promise, error: entry?.error };
       cache.set(key, entry);
       promise
         .then((data) => {
@@ -97,15 +99,20 @@ export async function serveEpg(req: IncomingMessage, res: ServerResponse, params
           cache.set(key, { at: Date.now(), data });
           while (cache.size > MAX_ENTRIES) cache.delete(cache.keys().next().value!);
         })
-        .catch(() => {
+        .catch((err: Error) => {
           const e = cache.get(key);
-          if (e) e.promise = undefined;
+          if (e) {
+            e.promise = undefined;
+            e.error = err.message;
+          }
         });
     }
     try {
       await entry.promise;
     } catch (e) {
       if (!entry.data) return sendError(res, 502, (e as Error).message);
+      // Recorded here too: the .catch above runs a tick later, after this reply would have gone out.
+      (cache.get(key) ?? entry).error = (e as Error).message;
     }
     entry = cache.get(key)!;
   }
@@ -118,6 +125,8 @@ export async function serveEpg(req: IncomingMessage, res: ServerResponse, params
     'Content-Length': body.length,
     'Cache-Control': 'no-store',
     'X-Guide-Listings': String(Object.keys(data.programmes).length),
+    ...(entry.error ? { 'X-Guide-Error': entry.error.slice(0, 200) } : {}),
+    'Access-Control-Expose-Headers': 'X-Guide-Error, X-Guide-Listings',
     ...(acceptsGzip ? { 'Content-Encoding': 'gzip' } : {}),
   });
   res.end(body);

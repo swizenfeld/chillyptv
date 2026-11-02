@@ -50,7 +50,11 @@ export function useBoot(): boolean {
   }, [ready, profile, loadCatalog]);
 
   useEffect(() => {
-    if (ready && profile && catalog && catalog.profileId === profile.id) void loadEpg(profile, catalog);
+    if (!ready || !profile || !catalog || catalog.profileId !== profile.id) return;
+    void loadEpg(profile, catalog);
+    // The store decides whether anything is due: a stale guide, or an hourly retry during an outage.
+    const t = setInterval(() => void loadEpg(profile, catalog), 15 * 60_000);
+    return () => clearInterval(t);
   }, [ready, profile, catalog, loadEpg]);
 
   useEffect(() => {

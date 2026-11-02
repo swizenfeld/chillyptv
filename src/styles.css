@@ -3717,3 +3717,21 @@ textarea.input {
   font-weight: 600;
   margin-right: 4px;
 }
+
+.guide-outage {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid color-mix(in srgb, var(--warn) 40%, transparent);
+  background: color-mix(in srgb, var(--warn) 10%, transparent);
+  font-size: 13px;
+  line-height: 1.45;
+}
+.guide-outage svg {
+  flex: none;
+  margin-top: 2px;
+  color: var(--warn);
+}

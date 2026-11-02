@@ -390,6 +390,27 @@ await step('subtitles on request: playback starts at once, tracks are read when 
   await page.keyboard.press('Escape');
 });
 
+await step('guide outage: saved copy kept, explained, and cleared when the guide returns', async () => {
+  await fetch(`${MOCK}/__mock/guide?down=1`);
+  try {
+    await page.goto(`${APP}/settings`);
+    const card = page.locator('section.card', { has: page.getByRole('heading', { name: 'TV guide' }) });
+    await card.getByRole('button', { name: 'Save and load' }).click();
+    await card.locator('.guide-outage', { hasText: 'returns “not found”' }).waitFor({ timeout: 30000 });
+    await card.locator('.guide-outage', { hasText: 'Showing the copy saved' }).waitFor();
+    // Listings from the saved copy still show in the guide.
+    await page.goto(`${APP}/guide`);
+    await page.locator('.guide-outage').waitFor();
+    await page.locator('.guide-row, .guide-ch').first().waitFor();
+  } finally {
+    await fetch(`${MOCK}/__mock/guide?down=0`);
+  }
+  await page.goto(`${APP}/settings`);
+  const card = page.locator('section.card', { has: page.getByRole('heading', { name: 'TV guide' }) });
+  await card.getByRole('button', { name: 'Save and load' }).click();
+  await page.waitForFunction(() => !document.querySelector('.guide-outage'), null, { timeout: 30000 });
+});
+
 await step('MPEG-TS live via mpegts.js', async () => {
   await page.evaluate(async () => {
     const raw = JSON.parse(localStorage.getItem('chilly.profiles'));

@@ -452,7 +452,10 @@ function extraEpg(res: ServerResponse) {
   res.end(gzipSync(out.join('\n')));
 }
 
+let guideDown = false;
+
 function xmltv(_req: IncomingMessage, res: ServerResponse) {
+  if (guideDown) return res.writeHead(404, { 'Content-Type': 'text/plain' }).end('Not Found');
   const now = Date.now();
   const out = ['<?xml version="1.0" encoding="UTF-8"?>', '<tv generator-info-name="chillyptv-mock">'];
   // Big providers' guides describe many channels the playlist doesn't carry.
@@ -500,6 +503,11 @@ const server = createServer((req, res) => {
   }
   // Test hooks for one-connection plans: /__mock/slow?id=N delays movie N's next request by 9 s;
   // /__mock/conns?id=N reports how many requests for movie N were open at once (most and now).
+  // /__mock/guide?down=1 makes xmltv.php answer 404 like the reported provider; down=0 restores it.
+  if (p === '/__mock/guide') {
+    guideDown = url.searchParams.get('down') === '1';
+    return json(res, { guideDown });
+  }
   if (p === '/__mock/slow') {
     slowOnce.add(Number(url.searchParams.get('id')));
     return json(res, { ok: true });

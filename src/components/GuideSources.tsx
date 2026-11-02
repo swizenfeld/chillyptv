@@ -1,3 +1,4 @@
+import { GuideOutageNote } from './GuideOutage';
 import { useMemo, useState } from 'react';
 import { CheckCircle2, AlertCircle } from 'lucide-react';
 import { useActiveProfile, useProfiles } from '../store/profiles';
@@ -48,6 +49,7 @@ export function GuideSources() {
 
   return (
     <div className="guide-sources">
+      <GuideOutageNote />
       {coverage && (
         <div className="setting">
           <span>
