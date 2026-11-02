@@ -1,3 +1,4 @@
+import { isNativeApp } from '../native/player';
 import { feedName } from '../lib/channelTags';
 import { EventsList } from '../components/EventsList';
 import { buildEvents } from '../lib/events';
@@ -106,6 +107,8 @@ export function LiveTVPage() {
   const [selectedId, setSelectedId] = useState<string | null>(params.get('ch'));
   const selected = (selectedId && index?.channelById.get(selectedId)) || channels[0];
   const narrow = typeof window !== 'undefined' && window.matchMedia('(max-width: 900px)').matches;
+  // The Android / Fire TV app plays full screen in the native player only (one provider connection).
+  const previewOn = settings.livePreview && !isNativeApp();
 
   const view = useMemo(() => (catalog ? tidyView(catalog, settings) : null), [catalog, settings]);
   const counts = useMemo(() => {
@@ -122,7 +125,7 @@ export function LiveTVPage() {
     parentRef.current?.scrollTo({ top: 0 });
   }, [cat]);
 
-  const previewSession = useMemo(() => (profile && selected && settings.livePreview && !narrow ? liveSession(profile, selected) : null), [profile, selected, settings.livePreview, narrow]);
+  const previewSession = useMemo(() => (profile && selected && previewOn && !narrow ? liveSession(profile, selected) : null), [profile, selected, previewOn, narrow]);
 
   if (status === 'loading' && !catalog) return <Spinner label="Loading channels…" />;
   if (!catalog || !index || !profile) return null;
@@ -186,7 +189,7 @@ export function LiveTVPage() {
             data={sports}
             filter={filter}
             selectedId={selected?.id}
-            onSelect={(ch, m) => (narrow || !settings.livePreview ? play.playMatch(m, ch) : setSelectedId(ch.id))}
+            onSelect={(ch, m) => (narrow || !previewOn ? play.playMatch(m, ch) : setSelectedId(ch.id))}
             onOpen={(m, ch) => play.playMatch(m, ch)}
           />
         ) : isEvents ? (
@@ -195,7 +198,7 @@ export function LiveTVPage() {
             filter={filter}
             now={minute}
             selectedId={selected?.id}
-            onSelect={(ch) => (narrow || !settings.livePreview ? play.playChannel(ch, zapIds) : setSelectedId(ch.id))}
+            onSelect={(ch) => (narrow || !previewOn ? play.playChannel(ch, zapIds) : setSelectedId(ch.id))}
             onOpen={(ch) => play.playChannel(ch, zapIds)}
           />
         ) : channels.length === 0 ? (
@@ -218,7 +221,7 @@ export function LiveTVPage() {
                     aria-selected={active}
                     className={`channel-row ${active ? 'active' : ''}`}
                     style={{ transform: `translateY(${vi.start}px)`, height: vi.size }}
-                    onClick={() => (narrow || !settings.livePreview ? openFull(ch) : setSelectedId(ch.id))}
+                    onClick={() => (narrow || !previewOn ? openFull(ch) : setSelectedId(ch.id))}
                     onDoubleClick={() => openFull(ch)}
                   >
                     <span className="ch-num">{ch.num}</span>
@@ -289,7 +292,7 @@ export function LiveTVPage() {
               <button className="btn" onClick={() => toggleFavorite(profile.id, { kind: 'live', id: selected.id, name: selected.name, image: selected.logo })}>
                 <Heart size={16} fill={favs.some((f) => f.id === selected.id) ? 'currentColor' : 'none'} /> Favourite
               </button>
-              <button
+              {!isNativeApp() && <button
                 className="btn"
                 onClick={() => {
                   const mv = useLibrary.getState().multiview[profile.id] ?? { layout: '4', slots: [null, null, null, null], audioSlot: 0 };
@@ -302,7 +305,7 @@ export function LiveTVPage() {
                 }}
               >
                 <LayoutGrid size={16} /> Multi-View
-              </button>
+              </button>}
             </div>
           </div>
           <ChannelEpg channel={selected} />

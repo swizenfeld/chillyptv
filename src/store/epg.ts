@@ -11,6 +11,8 @@ import { useLibrary } from './library';
 import { useCatalog } from './catalog';
 import { autoGuideKey, buildGuideResolver, listingCount, trimGuide, type GuideResolver, type GuideWant } from '../../shared/guide';
 import { eventListing } from '../../shared/events';
+import { isNativeApp } from '../native/player';
+import { loadGuideNatively } from '../native/guide';
 import { channelTags } from '../lib/channelTags';
 
 const STALE_MS = 6 * 60 * 60 * 1000;
@@ -134,8 +136,10 @@ async function downloadEpg(url: string, profile: Profile, catalog: Catalog, forc
     if (stale) data.staleError = stale;
     return data;
   }
-  const text = await fetchUpstreamText(url, { ua: profile.userAgent });
   const now = Date.now();
+  // The Android / Fire TV app reads the guide natively and only keeps what the playlist needs.
+  if (isNativeApp()) return loadGuideNatively(url, profile.userAgent, wants, keep, { from: now - s.epgPastDays * 86_400_000, to: now + s.epgFutureDays * 86_400_000 });
+  const text = await fetchUpstreamText(url, { ua: profile.userAgent });
   return trimGuide(parseXmltv(text, { from: now - s.epgPastDays * 86_400_000, to: now + s.epgFutureDays * 86_400_000 }), wants, keep);
 }
 

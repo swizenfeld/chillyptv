@@ -1,3 +1,4 @@
+import { installSpatialNav } from '../lib/spatialNav';
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { checkBackend, setNetworkConfig } from '../lib/api';
@@ -39,6 +40,11 @@ export function useBoot(): boolean {
       clearInterval(t);
     };
   }, []);
+
+  const remoteNav = useSettings((s) => s.remoteNav);
+  useEffect(() => {
+    if (remoteNav) installSpatialNav();
+  }, [remoteNav]);
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;

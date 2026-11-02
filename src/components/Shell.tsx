@@ -8,6 +8,7 @@ import { formatClock } from '../lib/format';
 import { useNow } from './ui';
 import { backendHealth } from '../lib/api';
 import { SportsProvider } from '../store/SportsProvider';
+import { isNativeApp } from '../native/player';
 
 const NAV = [
   { to: '/', icon: Home, label: 'Home', end: true },
@@ -17,10 +18,10 @@ const NAV = [
   // "secondary" items are also Home shortcuts, so the phone bottom bar can drop them.
   { to: '/guide', icon: CalendarClock, label: 'TV Guide', secondary: true },
   { to: '/catchup', icon: History, label: 'Catch-up', secondary: true },
-  { to: '/multiview', icon: LayoutGrid, label: 'Multi-View', secondary: true },
+  { to: '/multiview', icon: LayoutGrid, label: 'Multi-View', secondary: true, webOnly: true },
   { to: '/search', icon: Search, label: 'Search' },
   { to: '/favorites', icon: Heart, label: 'Favourites' },
-  { to: '/recordings', icon: Video, label: 'Recordings', secondary: true },
+  { to: '/recordings', icon: Video, label: 'Recordings', secondary: true, webOnly: true },
   { to: '/settings', icon: Settings, label: 'Settings' },
 ];
 
@@ -44,7 +45,7 @@ export function Shell() {
           </span>
           <span className="brand-name">ChillyPTV</span>
         </div>
-        {NAV.map((n) => (
+        {NAV.filter((n) => !(n.webOnly && isNativeApp())).map((n) => (
           <NavLink key={n.to} to={n.to} end={n.end} className={({ isActive }) => `rail-item ${isActive ? 'active' : ''} ${'secondary' in n && n.secondary ? 'secondary-nav' : ''}`} title={n.label}>
             <n.icon size={20} aria-hidden />
             <span>{n.label}</span>

@@ -1,3 +1,4 @@
+import { isNativeApp } from '../native/player';
 import { useMemo, useState } from 'react';
 import { del } from 'idb-keyval';
 import { Download, EyeOff, Keyboard, Lock, Palette, PlayCircle, RefreshCw, Shield, Upload, Wifi, CalendarClock, Database, Cloud, Trophy } from 'lucide-react';
@@ -102,6 +103,7 @@ export function SettingsPage() {
         </div>
         <Toggle checked={s.autoReconnect} onChange={(autoReconnect) => set({ autoReconnect })} label="Auto-reconnect live streams" hint="Retries with back-off and switches HLS ↔ TS when a stream drops." />
         <Toggle checked={s.livePreview} onChange={(livePreview) => set({ livePreview })} label="Preview channels in the Live TV list" hint="Uses one provider connection while browsing." />
+        {!isNativeApp() && <Toggle checked={s.remoteNav} onChange={(remoteNav) => set({ remoteNav })} label="Remote control navigation" hint="Arrow keys move between buttons and lists, OK/Enter opens, as on a TV. Always on in the Fire TV app; turning it off takes effect after a reload." />}
         <Toggle checked={!s.showEventSlots} onChange={(v) => set({ showEventSlots: !v })} label="Hide empty and finished event slots" hint="Event channels like “- NO EVENT STREAMING -” or “ENDED | …” stay out of Live TV lists. Sports today still finds matches on them." />
         <Toggle checked={s.groupRegional} onChange={(groupRegional) => set({ groupRegional })} label="Group regional versions of a channel" hint="Shows one entry for a channel offered in many cities, with a city picker next to the player." />
         <Toggle checked={s.autoplayNext} onChange={(autoplayNext) => set({ autoplayNext })} label="Autoplay next episode" />

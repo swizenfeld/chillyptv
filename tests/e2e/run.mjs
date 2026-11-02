@@ -455,6 +455,47 @@ await step('events: every sport from event channels, feeds merged', async () => 
   await page.screenshot({ path: join(OUT, '04c-events.png') });
 });
 
+await step('remote-control navigation (Fire TV style arrows/OK)', async () => {
+  await page.goto(`${APP}/settings`);
+  await page.getByLabel('Remote control navigation').check();
+  await page.goto(`${APP}/live`);
+  await page.locator('.channel-row').first().waitFor();
+  const focused = () => page.evaluate(() => {
+    const a = document.activeElement;
+    return a ? `${a.tagName}|${a.getAttribute('role') ?? ''}|${(a.textContent ?? '').trim().slice(0, 30)}|${a.getAttribute('aria-label') ?? a.getAttribute('placeholder') ?? ''}` : '';
+  });
+  // Down the sidebar.
+  await page.locator('.rail a', { hasText: 'Movies' }).first().focus();
+  await page.keyboard.press('ArrowDown');
+  if (!(await focused()).includes('Series')) throw new Error(`down from Movies → ${await focused()}`);
+  // Right from the sidebar lands in the categories column.
+  await page.locator('.rail a', { hasText: 'Live TV' }).first().focus();
+  await page.keyboard.press('ArrowRight');
+  const inCats = await page.evaluate(() => !!document.activeElement?.closest('.cat-list'));
+  if (!inCats) throw new Error(`right from Live TV → ${await focused()}`);
+  // The channel list moves its selection with Up/Down and opens the player with OK.
+  await page.locator('.v-list[role="listbox"]').focus();
+  const sel0 = await page.locator('.v-list [role="option"][aria-selected="true"] .ch-name').textContent();
+  await page.keyboard.press('ArrowDown');
+  await page.keyboard.press('ArrowDown');
+  const sel2 = await page.locator('.v-list [role="option"][aria-selected="true"] .ch-name').textContent();
+  if (sel0 === sel2) throw new Error('selection did not move');
+  await page.keyboard.press('Enter');
+  await page.waitForURL(/\/play/);
+  await playing('.player-full video');
+  await page.keyboard.press('Escape');
+  await page.waitForURL(/\/live/);
+  // In a dialog, the arrows stay inside it.
+  await page.locator('.channel-row').nth(4).click();
+  await page.getByRole('button', { name: 'Wrong guide? Fix it' }).click();
+  await page.locator('.modal').waitFor();
+  for (let i = 0; i < 8; i++) await page.keyboard.press(i % 2 ? 'ArrowDown' : 'ArrowRight');
+  if (!(await page.evaluate(() => !!document.activeElement?.closest('.modal')))) throw new Error('focus left the dialog');
+  await page.keyboard.press('Escape');
+  await page.goto(`${APP}/settings`);
+  await page.getByLabel('Remote control navigation').uncheck();
+});
+
 await step('MPEG-TS live via mpegts.js', async () => {
   await page.evaluate(async () => {
     const raw = JSON.parse(localStorage.getItem('chilly.profiles'));

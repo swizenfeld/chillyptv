@@ -3757,3 +3757,23 @@ textarea.input {
   margin-left: 2px;
   font-size: 11px;
 }
+
+/* Remote-control navigation: a focus ring you can see from the sofa. */
+.tv-mode :focus-visible,
+.tv-mode [role='listbox']:focus {
+  outline: 3px solid var(--accent) !important;
+  outline-offset: 3px;
+  border-radius: 10px;
+}
+.tv-mode .poster-card:focus-within,
+.tv-mode .live-card:focus-within {
+  transform: scale(1.04);
+  transition: transform 0.15s ease;
+}
+.tv-mode .poster-card:focus-within .poster-play,
+.tv-mode .poster-btn:focus-visible .poster-play {
+  opacity: 1;
+}
+.tv-mode .channel-row:focus-visible {
+  outline-offset: -3px;
+}

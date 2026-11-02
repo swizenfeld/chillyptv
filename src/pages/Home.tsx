@@ -1,3 +1,4 @@
+import { isNativeApp } from '../native/player';
 import { useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Bell, CalendarClock, Clapperboard, Film, Heart, History, LayoutGrid, Play, Search, Trash2, Tv, UserRound, Video } from 'lucide-react';
@@ -103,9 +104,9 @@ export function HomePage() {
     { to: '/series', icon: Clapperboard, label: 'Series', count: catalog.series.length },
     { to: '/guide', icon: CalendarClock, label: 'TV Guide' },
     { to: '/catchup', icon: History, label: 'Catch-up' },
-    { to: '/multiview', icon: LayoutGrid, label: 'Multi-View' },
+    ...(isNativeApp() ? [] : [{ to: '/multiview', icon: LayoutGrid, label: 'Multi-View' }]),
     { to: '/search', icon: Search, label: 'Search' },
-    { to: '/recordings', icon: Video, label: 'Recordings' },
+    ...(isNativeApp() ? [] : [{ to: '/recordings', icon: Video, label: 'Recordings' }]),
     ...(account ? [{ to: '/account', icon: UserRound, label: 'Account' }] : []),
   ];
 
@@ -204,7 +205,8 @@ export function HomePage() {
 /** Billboard for live TV: a muted live preview (or channel art) with what is on now. */
 function LiveHero({ profile, channel, now, onWatch }: { profile: Profile; channel: Channel; now: number; onWatch: () => void }) {
   const navigate = useNavigate();
-  const livePreview = useSettings((s) => s.livePreview);
+  // The Android / Fire TV app keeps the provider connection for the full-screen player.
+  const livePreview = useSettings((s) => s.livePreview) && !isNativeApp();
   const clock24 = useSettings((s) => s.clock24);
   const toggleFavorite = useLibrary((s) => s.toggleFavorite);
   const isFav = useIsFavorite(profile.id, 'live', channel.id);
