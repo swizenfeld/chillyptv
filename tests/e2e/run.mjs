@@ -362,6 +362,34 @@ await step('one-connection plans: a slow track read is stopped before playback o
   await page.keyboard.press('Escape');
 });
 
+await step('subtitles on request: playback starts at once, tracks are read when asked', async () => {
+  // Movie 5012 is another two-language file. Keep its page from reading tracks, as when a movie is
+  // started from Continue watching: nothing is known, so the player must not wait.
+  await page.route('**/api/probe**', (r) => r.abort());
+  await page.goto(`${APP}/movies/5012`);
+  await page.waitForTimeout(500);
+  await page.unroute('**/api/probe**');
+  const t0 = Date.now();
+  await page.getByRole('button', { name: /^Play$/ }).click();
+  await page.waitForURL(/\/play/);
+  await playing('.player-full video');
+  if (Date.now() - t0 > 5000) throw new Error(`playback took ${Date.now() - t0} ms to start without known tracks`);
+  const player = page.locator('.player-full');
+  await player.hover();
+  await player.getByRole('button', { name: 'Subtitles' }).click();
+  await page.getByRole('menuitemradio', { name: 'Look for subtitles and audio…' }).click();
+  await playing('.player-full video');
+  await player.hover();
+  await player.getByRole('button', { name: 'Subtitles' }).click();
+  await page.getByRole('menuitemradio', { name: /^Spanish/ }).waitFor();
+  await page.getByRole('menuitemradio', { name: /^English/ }).click();
+  await page.waitForFunction(() => {
+    const t = [...(document.querySelector('.player-full video')?.textTracks ?? [])].find((x) => x.mode === 'showing');
+    return /^English subtitle line \d+$/.test(t?.activeCues?.[0]?.text ?? '');
+  }, null, { timeout: 30000 });
+  await page.keyboard.press('Escape');
+});
+
 await step('MPEG-TS live via mpegts.js', async () => {
   await page.evaluate(async () => {
     const raw = JSON.parse(localStorage.getItem('chilly.profiles'));

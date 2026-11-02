@@ -37,6 +37,11 @@ export function fileTracks(url: string, ua?: string, opts: { claim?: boolean } =
   return e.promise;
 }
 
+/** A read of this file was started (and hasn't failed): waiting for it is worthwhile. */
+export function tracksRequested(url: string): boolean {
+  return cache.has(url);
+}
+
 /** Stops a read still in progress (the player gave up waiting and is about to open the stream). */
 export function cancelTracks(url: string): void {
   const e = cache.get(url);

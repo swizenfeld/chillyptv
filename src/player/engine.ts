@@ -2,7 +2,7 @@ import type Hls from 'hls.js';
 import type { ErrorData, Level } from 'hls.js';
 import type Mpegts from 'mpegts.js';
 import { backendHealth, probe, proxied, remuxSubtitles, remuxUrl } from '../lib/api';
-import { cancelTracks, fileTracks } from '../lib/tracks';
+import { cancelTracks, fileTracks, tracksRequested } from '../lib/tracks';
 import { audioLabel, lang2, subtitleLabel, type MediaProbe } from '../../shared/media';
 import { extOf } from '../lib/format';
 import type { PlayRequest } from '../lib/types';
@@ -95,6 +95,10 @@ export function planCandidates(req: PlayRequest, opts: { preferRemux: boolean; f
   return out;
 }
 
+/** Pseudo subtitle-menu entries for files whose tracks haven't been / couldn't be read. */
+const LOOK_FOR_TRACKS = -2;
+const NO_TRACKS = -3;
+
 /** Waits for the file's tracks, but never longer than this before playback starts. */
 const TRACKS_WAIT_MS = 6000;
 async function probeFile(url: string, ua?: string): Promise<MediaProbe | null> {
@@ -157,6 +161,9 @@ export class PlaybackEngine {
   current: Candidate | null = null;
   /** Tracks inside a movie/episode file (ffprobe), when the server can read them. */
   private file: MediaProbe | null = null;
+  /** A movie/episode whose tracks haven't been read yet (the subtitle menu offers to look). */
+  private fileUnchecked = false;
+  private discovering = false;
   /** Chosen audio stream (0:a:N) and text subtitle stream (0:s:N, -1 = off) for the file. */
   private fileAudio = 0;
   private fileSub = -1;
@@ -188,12 +195,18 @@ export class PlaybackEngine {
     const health = backendHealth();
     // Movies and episodes: list the file's audio and subtitle tracks first (one short connection,
     // closed before playback opens one, so a one-connection plan isn't exceeded).
+    // Waiting is only worth it when the tracks are already being read (the movie's page started it)
+    // or subtitles are wanted from the start; otherwise playback starts at once and the subtitle
+    // menu offers to look for tracks (reading a file takes ~4 s on a real provider).
     const vod = this.req.kind === 'movie' || this.req.kind === 'episode';
     if (vod && health?.ffmpeg) {
-      this.file = await probeFile(this.req.url, this.req.userAgent);
-      if (this.destroyed) return;
-      if (this.file?.duration) this.probedDuration = this.file.duration;
-      this.pickPreferredFileTracks();
+      if (tracksRequested(this.req.url) || this.opts.preferredSubLang) {
+        this.file = await probeFile(this.req.url, this.req.userAgent);
+        if (this.destroyed) return;
+        if (this.file?.duration) this.probedDuration = this.file.duration;
+        this.pickPreferredFileTracks();
+      }
+      this.fileUnchecked = !this.file;
     }
     this.candidates = planCandidates(this.req, {
       preferRemux: this.opts.preferRemux,
@@ -590,7 +603,11 @@ export class PlaybackEngine {
 
   subtitleTracks(): TrackInfo[] {
     if (this.hls) return this.hls.subtitleTracks.map((t, i) => ({ id: i, label: t.name || t.lang || `Subtitle ${i + 1}`, lang: t.lang }));
+    if (this.fileUnchecked) return [{ id: LOOK_FOR_TRACKS, label: 'Look for subtitles and audio…' }];
     // Picture subtitles (PGS, VobSub) can't be turned into text, so only text ones are offered.
+    if (this.file && this.checkedOnRequest && !this.file.subtitles.some((t) => t.text)) {
+      return [{ id: NO_TRACKS, label: this.file.subtitles.length ? 'Only picture subtitles, which can’t be shown' : 'No subtitles in this file' }];
+    }
     if (this.file?.subtitles.length) return this.menuOrder(this.file.subtitles.filter((t) => t.text).map((t) => ({ id: t.index, label: subtitleLabel(t), lang: t.lang })), this.opts.preferredSubLang);
     const tt = this.video.textTracks;
     const out: TrackInfo[] = [];
@@ -600,6 +617,7 @@ export class PlaybackEngine {
 
   currentSubtitle(): number {
     if (this.hls) return this.hls.subtitleDisplay ? this.hls.subtitleTrack : -1;
+    if (this.fileUnchecked || this.checkedOnRequest) return this.file?.subtitles.length ? this.fileSub : -1;
     if (this.file?.subtitles.length) return this.fileSub;
     const tt = this.video.textTracks;
     for (let i = 0; i < tt.length; i++) if (tt[i].mode === 'showing') return i;
@@ -610,6 +628,11 @@ export class PlaybackEngine {
     if (this.hls) {
       this.hls.subtitleTrack = id;
       this.hls.subtitleDisplay = id >= 0;
+      return;
+    }
+    if (id === NO_TRACKS) return;
+    if (id === LOOK_FOR_TRACKS) {
+      void this.lookForTracks();
       return;
     }
     if (this.file?.subtitles.length) {
@@ -676,6 +699,34 @@ export class PlaybackEngine {
       i = this.candidates.length - 1;
     }
     return i;
+  }
+
+  /** The file's tracks were read because the viewer asked (not before playback). */
+  private checkedOnRequest = false;
+
+  /**
+   * Reads the file's tracks on request. Playback stops first: on a one-connection plan the read
+   * and the stream can't be open together. Then it resumes at the same spot.
+   */
+  private async lookForTracks(): Promise<void> {
+    if (this.discovering || !this.fileUnchecked) return;
+    this.discovering = true;
+    this.offset = this.currentTime;
+    this.teardownPlayers();
+    this.opts.onStatus('loading', 'Looking for subtitles and audio tracks…');
+    const file = await Promise.race([fileTracks(this.req.url, this.req.userAgent, { claim: true }), new Promise<null>((r) => setTimeout(() => r(null), 25_000))]);
+    if (!file) cancelTracks(this.req.url);
+    this.discovering = false;
+    if (this.destroyed) return;
+    this.file = file;
+    this.fileUnchecked = !file;
+    this.checkedOnRequest = !!file;
+    if (file?.duration) this.probedDuration = file.duration;
+    this.pickPreferredFileTracks();
+    if (this.fileAudio > 0 || this.fileSub >= 0) this.index = this.remuxIndex();
+    this.attempts = 0;
+    this.load();
+    this.opts.onTracks();
   }
 
   /** Restart from the current position through the server, which picks the chosen tracks. */
