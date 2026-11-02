@@ -1,0 +1,81 @@
+name: Fire TV APK
+
+# Builds the Android / Fire TV app and publishes it at a fixed address for the Downloader app:
+# https://github.com/swizenfeld/chillyptv/releases/download/firestick-latest/ChillyPTV.apk
+on:
+  push:
+    branches: [main, feature/iptv-player]
+    paths:
+      - 'src/**'
+      - 'shared/**'
+      - 'public/**'
+      - 'index.html'
+      - 'android/**'
+      - 'capacitor.config.ts'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'vite.config.ts'
+      - '.github/workflows/firetv-apk.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: firetv-apk-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+          cache: gradle
+
+      - uses: android-actions/setup-android@v3
+
+      - name: Build the web app
+        run: |
+          npm ci
+          npm run build
+
+      - name: Copy it into the Android project
+        run: npx cap sync android
+
+      - name: Build the APK
+        working-directory: android
+        env:
+          CHILLY_BUILD_NUMBER: ${{ github.run_number }}
+        run: ./gradlew assembleDebug --no-daemon --stacktrace
+
+      - name: Name it
+        run: cp android/app/build/outputs/apk/debug/app-debug.apk ChillyPTV.apk
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ChillyPTV-${{ github.run_number }}
+          path: ChillyPTV.apk
+
+      - name: Publish to the firestick-latest release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete firestick-latest --yes --cleanup-tag || true
+          gh release create firestick-latest ChillyPTV.apk \
+            --prerelease \
+            --target "${{ github.sha }}" \
+            --title "ChillyPTV for Fire TV (build ${{ github.run_number }})" \
+            --notes "Built from ${{ github.ref_name }} at ${{ github.sha }}.
+
+          Install on a Fire TV Stick: Settings → My Fire TV → Developer options → Install unknown apps → allow Downloader. Then in Downloader open:
+          https://github.com/${{ github.repository }}/releases/download/firestick-latest/ChillyPTV.apk"
