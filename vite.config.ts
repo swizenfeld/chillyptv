@@ -11,6 +11,8 @@ export default defineConfig({
   },
   build: {
     outDir: 'dist',
+    // Fire TV sticks run older Android WebViews (Fire OS 7/8): compile down to Chrome 87-level JS.
+    target: ['es2020', 'chrome87'],
     chunkSizeWarningLimit: 1200,
   },
   test: {
