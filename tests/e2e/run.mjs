@@ -440,6 +440,21 @@ await step('tidy Live TV: empty/finished slots hidden, regional versions grouped
   await toggles();
 });
 
+await step('events: every sport from event channels, feeds merged', async () => {
+  await page.goto(`${APP}/live?cat=__events`);
+  await page.locator('.sports-chips').waitFor();
+  // Villa v Fulham is 5½ hours away: "Later today", or folded under "Coming days" late in the day.
+  const card = page.locator('.event-card', { hasText: 'Aston Villa' });
+  if (!(await card.count())) await page.locator('.sports-fold', { hasText: 'Coming days' }).click();
+  await card.waitFor();
+  // The Peacock slot and the "LIVE | ASTON VILLA VS. FULHAM" PPV slot are one event with two feeds.
+  const feeds = await card.locator('.match-ch-name').allTextContents();
+  if (!feeds.includes('Peacock 013') || !feeds.includes('SOCCER PPV 129')) throw new Error(`feeds ${feeds}`);
+  await card.locator('.match-ch', { hasText: 'Peacock 013' }).click();
+  await page.locator('.preview-title', { hasText: 'Peacock 013' }).waitFor();
+  await page.screenshot({ path: join(OUT, '04c-events.png') });
+});
+
 await step('MPEG-TS live via mpegts.js', async () => {
   await page.evaluate(async () => {
     const raw = JSON.parse(localStorage.getItem('chilly.profiles'));

@@ -1,8 +1,11 @@
+import { feedName } from '../lib/channelTags';
+import { EventsList } from '../components/EventsList';
+import { buildEvents } from '../lib/events';
 import { tidyView, versionLabel } from '../lib/tidy';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useVirtualizer } from '@tanstack/react-virtual';
-import { Archive, Bell, BellRing, Clock, Heart, LayoutGrid, List, Maximize2, Play, Search, Star, Trophy, Tv, Wrench } from 'lucide-react';
+import { Archive, Bell, BellRing, CalendarRange, Clock, Heart, LayoutGrid, List, Maximize2, Play, Search, Star, Trophy, Tv, Wrench } from 'lucide-react';
 import { useCatalog } from '../store/catalog';
 import { useActiveProfile } from '../store/profiles';
 import { useFavorites, useHistory, useLibrary } from '../store/library';
@@ -65,10 +68,32 @@ export function LiveTVPage() {
   const cat = params.get('cat') ?? '__all';
   const [filter, setFilter] = useState('');
   const isSports = cat === '__sports';
+  const isEvents = cat === '__events';
   const listChannels = useVisibleChannels(cat, filter);
+  const allVisible = useVisibleChannels('__all', '');
   const sports = useSports();
-  // In "Sports today" the zap/preview order is the channels carrying today's matches.
-  const channels = isSports ? sports.channels : listChannels;
+  const epgVer = useEpg((s) => s.version);
+  const minute = useNow(60_000);
+  // Events of every sport, from event channels' own names. Recomputed each minute (live/soon move on).
+  const events = useMemo(
+    () => (index ? buildEvents(allVisible, programmesFor, (c) => index.categoryById.get(c.categoryId)?.name ?? '', minute) : []),
+    [allVisible, index, epgVer, minute], // eslint-disable-line react-hooks/exhaustive-deps
+  );
+  const eventChannels = useMemo(() => {
+    const seen = new Set<string>();
+    const out: Channel[] = [];
+    for (const e of events) {
+      if (e.end <= minute) continue;
+      for (const f of e.feeds) {
+        if (seen.has(f.channel.id)) continue;
+        seen.add(f.channel.id);
+        out.push(f.channel);
+      }
+    }
+    return out;
+  }, [events, minute]);
+  // In "Sports today" and "Events" the zap/preview order is the channels carrying them.
+  const channels = isSports ? sports.channels : isEvents ? eventChannels : listChannels;
   const favs = useFavorites(profile?.id, 'live');
   const history = useHistory(profile?.id);
   const settings = useSettings();
@@ -138,6 +163,7 @@ export function LiveTVPage() {
         special={[
           { id: '__all', name: 'All channels', icon: <Tv size={16} />, count: catalog.channels.length - (view?.hidden.size ?? 0) },
           { id: '__sports', name: 'Sports today', icon: <Trophy size={16} />, count: sports.matches.filter((m) => m.state !== 'post').length },
+          { id: '__events', name: 'Events', icon: <CalendarRange size={16} />, count: events.filter((e) => e.end > minute && e.start < minute + 24 * 3_600_000).length },
           { id: '__fav', name: 'Favourites', icon: <Star size={16} />, count: favs.length },
           { id: '__recent', name: 'Recently watched', icon: <Clock size={16} />, count: history.filter((h) => h.kind === 'live').length },
           { id: '__archive', name: 'With catch-up', icon: <Archive size={16} />, count: catalog.channels.filter((c) => c.archive && !view?.hidden.has(c.id)).length },
@@ -147,9 +173,9 @@ export function LiveTVPage() {
         <div className="col-head">
           <div className="search-box">
             <Search size={16} />
-            <input value={filter} onChange={(e) => setFilter(e.target.value)} placeholder={isSports ? 'Filter teams, leagues or channels' : `Filter ${channels.length} channels`} aria-label="Filter channels" />
+            <input value={filter} onChange={(e) => setFilter(e.target.value)} placeholder={isSports ? 'Filter teams, leagues or channels' : isEvents ? 'Filter events, sports or channels' : `Filter ${channels.length} channels`} aria-label="Filter channels" />
           </div>
-          {!isSports && <select className="select" value={settings.channelSort} onChange={(e) => setSettings({ channelSort: e.target.value as typeof settings.channelSort })} aria-label="Sort channels">
+          {!isSports && !isEvents && <select className="select" value={settings.channelSort} onChange={(e) => setSettings({ channelSort: e.target.value as typeof settings.channelSort })} aria-label="Sort channels">
             <option value="default">Provider order</option>
             <option value="number">Number</option>
             <option value="name">A–Z</option>
@@ -162,6 +188,15 @@ export function LiveTVPage() {
             selectedId={selected?.id}
             onSelect={(ch, m) => (narrow || !settings.livePreview ? play.playMatch(m, ch) : setSelectedId(ch.id))}
             onOpen={(m, ch) => play.playMatch(m, ch)}
+          />
+        ) : isEvents ? (
+          <EventsList
+            events={events}
+            filter={filter}
+            now={minute}
+            selectedId={selected?.id}
+            onSelect={(ch) => (narrow || !settings.livePreview ? play.playChannel(ch, zapIds) : setSelectedId(ch.id))}
+            onOpen={(ch) => play.playChannel(ch, zapIds)}
           />
         ) : channels.length === 0 ? (
           <Empty icon={cat === '__fav' ? <Star size={36} /> : <List size={36} />} title={cat === '__fav' ? 'No favourite channels yet' : filter ? `No channels match “${filter}”` : 'No channels here'}>
@@ -232,8 +267,8 @@ export function LiveTVPage() {
             </div>
           )}
           <div className="preview-actions">
-            <h2 className="preview-title">
-              <span className="ch-num">{selected.num}</span> {selected.name}
+            <h2 className="preview-title" title={selected.name}>
+              <span className="ch-num">{selected.num}</span> {feedName(selected)}
             </h2>
             {versions && versions.length > 1 && (
               <label className="field version-pick">
