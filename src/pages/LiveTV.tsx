@@ -1,3 +1,4 @@
+import { tidyView, versionLabel } from '../lib/tidy';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useVirtualizer } from '@tanstack/react-virtual';
@@ -43,6 +44,11 @@ export function useVisibleChannels(cat: string, filter: string): Channel[] {
         return unlocked || !isCategoryLocked(settings, c.categoryId, catName);
       });
     }
+    // Favourites and history show exactly what was saved; everything else uses the tidy view.
+    if (cat !== '__fav' && cat !== '__recent') {
+      const view = tidyView(catalog, settings);
+      list = list.filter((c) => !view.hidden.has(c.id));
+    }
     list = quickFilter(list, filter, (c) => `${c.num} ${c.name}`);
     if (cat !== '__fav' && cat !== '__recent') {
       if (settings.channelSort === 'name') list = [...list].sort((a, b) => a.name.localeCompare(b.name));
@@ -76,11 +82,13 @@ export function LiveTVPage() {
   const selected = (selectedId && index?.channelById.get(selectedId)) || channels[0];
   const narrow = typeof window !== 'undefined' && window.matchMedia('(max-width: 900px)').matches;
 
+  const view = useMemo(() => (catalog ? tidyView(catalog, settings) : null), [catalog, settings]);
   const counts = useMemo(() => {
     const m = new Map<string, number>();
-    if (index) for (const [k, v] of index.channelsByCategory) m.set(k, v.length);
+    if (index && view) for (const [k, v] of index.channelsByCategory) m.set(k, v.filter((c) => !view.hidden.has(c.id)).length);
     return m;
-  }, [index]);
+  }, [index, view]);
+  const versions = selected && view ? view.groups.get(view.repOf.get(selected.id) ?? '') : undefined;
 
   const parentRef = useRef<HTMLDivElement>(null);
   const virtualizer = useVirtualizer({ count: channels.length, getScrollElement: () => parentRef.current, estimateSize: () => 64, overscan: 8 });
@@ -128,11 +136,11 @@ export function LiveTVPage() {
           setFilter('');
         }}
         special={[
-          { id: '__all', name: 'All channels', icon: <Tv size={16} />, count: catalog.channels.length },
+          { id: '__all', name: 'All channels', icon: <Tv size={16} />, count: catalog.channels.length - (view?.hidden.size ?? 0) },
           { id: '__sports', name: 'Sports today', icon: <Trophy size={16} />, count: sports.matches.filter((m) => m.state !== 'post').length },
           { id: '__fav', name: 'Favourites', icon: <Star size={16} />, count: favs.length },
           { id: '__recent', name: 'Recently watched', icon: <Clock size={16} />, count: history.filter((h) => h.kind === 'live').length },
-          { id: '__archive', name: 'With catch-up', icon: <Archive size={16} />, count: catalog.channels.filter((c) => c.archive).length },
+          { id: '__archive', name: 'With catch-up', icon: <Archive size={16} />, count: catalog.channels.filter((c) => c.archive && !view?.hidden.has(c.id)).length },
         ]}
       />
       <section className="channel-col">
@@ -166,7 +174,8 @@ export function LiveTVPage() {
                 const ch = channels[vi.index];
                 const nn = nowNext(programmesFor(ch), now);
                 const isFav = favs.some((f) => f.id === ch.id);
-                const active = selected?.id === ch.id;
+                // A city version picked in the panel keeps its group's row highlighted.
+                const active = selected?.id === ch.id || (!!selected && view?.repOf.get(selected.id) === ch.id);
                 return (
                   <div
                     key={ch.id}
@@ -182,6 +191,7 @@ export function LiveTVPage() {
                     <div className="ch-body">
                       <div className="ch-name">
                         {ch.name} {ch.archive && <Archive size={12} className="muted" aria-label="Catch-up available" />}
+                        {(view?.groups.get(ch.id)?.length ?? 0) > 1 && <span className="chip subtle versions-chip">{view!.groups.get(ch.id)!.length} versions</span>}
                       </div>
                       {nn.now && (
                         <div className="ch-now">
@@ -225,6 +235,18 @@ export function LiveTVPage() {
             <h2 className="preview-title">
               <span className="ch-num">{selected.num}</span> {selected.name}
             </h2>
+            {versions && versions.length > 1 && (
+              <label className="field version-pick">
+                <span>City / version</span>
+                <select className="select" value={selected.id} onChange={(e) => setSelectedId(e.target.value)}>
+                  {versions.map((v) => (
+                    <option key={v.id} value={v.id}>
+                      {versionLabel(v)}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
             <div className="row gap wrap">
               <button className="btn primary" onClick={() => openFull(selected)}>
                 <Maximize2 size={16} /> Full screen

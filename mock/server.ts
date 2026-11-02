@@ -139,6 +139,9 @@ const live: LiveCh[] = [];
 // and one finished. Each lists the guide title real providers might use.
 interface MockFixture { id: number; league: string; home: string; away: string; offsetMin: number; broadcasts: string[]; guide?: { ch: number; title: string }[] }
 const SPORTS_ANCHOR = Math.floor(Date.now() / (30 * 60_000)) * 30 * 60_000;
+// Regional copies of one network, as Mexican cable lineups list them ("MXC| AZTECA 7 (ALTAMIRA)").
+const localChannels = live.filter((c) => c.cat === 8);
+['MXC| AZTECA 7', 'MXC| AZTECA 7 HD', 'MXC| AZTECA 7 (ALTAMIRA)', 'MXC| AZTECA 7 (CAMPECHE)', 'MXC| AZTECA 7 (CANCUN)'].forEach((name, i) => (localChannels[i].name = name));
 const sportsChannels = live.filter((c) => c.cat === 2);
 sportsChannels[5].name = 'AR: TNT Sports HD';
 // Several feeds of one match, as big providers list them (language prefix, quality, raw feed).

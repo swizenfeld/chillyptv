@@ -102,6 +102,8 @@ export function SettingsPage() {
         </div>
         <Toggle checked={s.autoReconnect} onChange={(autoReconnect) => set({ autoReconnect })} label="Auto-reconnect live streams" hint="Retries with back-off and switches HLS ↔ TS when a stream drops." />
         <Toggle checked={s.livePreview} onChange={(livePreview) => set({ livePreview })} label="Preview channels in the Live TV list" hint="Uses one provider connection while browsing." />
+        <Toggle checked={!s.showEventSlots} onChange={(v) => set({ showEventSlots: !v })} label="Hide empty and finished event slots" hint="Event channels like “- NO EVENT STREAMING -” or “ENDED | …” stay out of Live TV lists. Sports today still finds matches on them." />
+        <Toggle checked={s.groupRegional} onChange={(groupRegional) => set({ groupRegional })} label="Group regional versions of a channel" hint="Shows one entry for a channel offered in many cities, with a city picker next to the player." />
         <Toggle checked={s.autoplayNext} onChange={(autoplayNext) => set({ autoplayNext })} label="Autoplay next episode" />
         <Toggle checked={s.preferRemux} onChange={(preferRemux) => set({ preferRemux })} label="Prefer server remux for MKV" hint="Converts MKV/AVI on the server (fixes missing audio for AC3/DTS). Seeking reloads the stream." />
         <Toggle checked={s.showStats} onChange={(showStats) => set({ showStats })} label="Show stream statistics by default" />

@@ -411,6 +411,35 @@ await step('guide outage: saved copy kept, explained, and cleared when the guide
   await page.waitForFunction(() => !document.querySelector('.guide-outage'), null, { timeout: 30000 });
 });
 
+await step('tidy Live TV: empty/finished slots hidden, regional versions grouped', async () => {
+  await page.goto(`${APP}/live`);
+  // 232 channels minus 2 hidden event slots (one empty, one ended) minus 4 grouped regional copies.
+  await page.locator('.cat-item', { hasText: 'All channels' }).getByText('226').waitFor();
+  await page.locator('.cat-item', { hasText: /^\s*Sports\s*\d+\s*$/ }).click();
+  if (await page.locator('.channel-row', { hasText: 'NO EVENT STREAMING' }).count()) throw new Error('empty event slot listed');
+  if (await page.locator('.channel-row', { hasText: 'SOCCER PPV 128' }).count()) throw new Error('finished event slot listed');
+  await page.locator('.cat-item', { hasText: 'US | Local' }).click();
+  const row = page.locator('.channel-row', { hasText: '5 versions' });
+  await row.waitFor();
+  if ((await row.locator('.ch-name').textContent()).trim().startsWith('MXC| AZTECA 7 HD') === false) throw new Error('expected the HD main version to represent the group');
+  if (await page.locator('.channel-row', { hasText: 'ALTAMIRA' }).count()) throw new Error('regional copy listed separately');
+  await row.click();
+  const pick = page.locator('.version-pick select');
+  await pick.selectOption({ label: 'Campeche' });
+  await page.locator('.preview-title', { hasText: 'MXC| AZTECA 7 (CAMPECHE)' }).waitFor();
+  await page.screenshot({ path: join(OUT, '03c-regional-versions.png') });
+  // The settings bring everything back.
+  const toggles = async () => {
+    await page.goto(`${APP}/settings`);
+    await page.getByLabel('Hide empty and finished event slots').click();
+    await page.getByLabel('Group regional versions of a channel').click();
+  };
+  await toggles();
+  await page.goto(`${APP}/live`);
+  await page.locator('.cat-item', { hasText: 'All channels' }).getByText('232').waitFor();
+  await toggles();
+});
+
 await step('MPEG-TS live via mpegts.js', async () => {
   await page.evaluate(async () => {
     const raw = JSON.parse(localStorage.getItem('chilly.profiles'));

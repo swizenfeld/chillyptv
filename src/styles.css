@@ -3735,3 +3735,13 @@ textarea.input {
   margin-top: 2px;
   color: var(--warn);
 }
+
+.versions-chip {
+  margin-left: 6px;
+  font-size: 10px;
+  vertical-align: 1px;
+}
+.version-pick {
+  max-width: 320px;
+  margin: 2px 0 10px;
+}

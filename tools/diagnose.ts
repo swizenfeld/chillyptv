@@ -252,6 +252,17 @@ async function main() {
   const byBase = new Map<string, Ch[]>();
   for (const c of channels) if (c.tags.base) (byBase.get(c.tags.base) ?? byBase.set(c.tags.base, []).get(c.tags.base)!).push(c);
   const dupGroups = [...byBase.values()].filter((g) => g.length > 1);
+  {
+    // What Live TV shows with the default tidy view: empty/finished event slots hidden, regional copies grouped.
+    const CITY = /\(([^)]+)\)\s*(?:\b(?:fhd|hd|sd|4k|uhd)\b\s*)?$/i;
+    const slots = channels.filter((c) => c.tags.event === 'idle' || c.tags.event === 'ended');
+    const groups = new Map<string, Ch[]>();
+    for (const c of channels) if (!(c.tags.event === 'idle' || c.tags.event === 'ended') && c.tags.base) (groups.get(`${c.category}|${c.tags.base}`) ?? groups.set(`${c.category}|${c.tags.base}`, []).get(`${c.category}|${c.tags.base}`)!).push(c);
+    const regional = [...groups.values()].filter((g) => g.length >= 3 && g.filter((c) => CITY.test(c.name)).length >= 2);
+    const folded = regional.reduce((a, g) => a + g.length - 1, 0);
+    out(`**Tidy Live TV:** ${slots.length.toLocaleString()} empty or finished event slots hidden, ${regional.length.toLocaleString()} channels with regional versions shown once (${folded.toLocaleString()} copies folded) → ${(n - slots.length - folded).toLocaleString()} of ${n.toLocaleString()} channels listed.`);
+    out();
+  }
   out(`**Duplicate feeds:** ${dupGroups.length.toLocaleString()} channel names appear more than once (${dupGroups.reduce((a, g) => a + g.length, 0).toLocaleString()} channels). Merging them would leave ${byBase.size.toLocaleString()} distinct channels.`);
   out();
   out('Largest duplicate groups:');
