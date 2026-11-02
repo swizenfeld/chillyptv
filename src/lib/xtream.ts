@@ -95,8 +95,12 @@ export class XtreamClient {
    * as soon as the live lists arrive, because movie lists on big providers take far longer
    * (16 MB / 18 s for 42,000 movies) and Live TV shouldn't wait for them.
    */
-  async catalog(signal?: AbortSignal, onLive?: (partial: Catalog) => void): Promise<Catalog> {
+  async catalog(signal?: AbortSignal, onLive?: (partial: Catalog) => void, opts: { skipLibrary?: boolean } = {}): Promise<Catalog> {
     const liveP = Promise.all([this.get<Json[]>({ action: 'get_live_categories' }, signal), this.get<Json[]>({ action: 'get_live_streams' }, signal)]);
+    if (opts.skipLibrary) {
+      const [liveCats, live] = await liveP;
+      return this.buildCatalog(liveCats, [], [], live, [], [], false);
+    }
     const restP = Promise.all([
       this.get<Json[]>({ action: 'get_vod_categories' }, signal).catch(() => []),
       this.get<Json[]>({ action: 'get_series_categories' }, signal).catch(() => []),
@@ -107,7 +111,7 @@ export class XtreamClient {
     const [liveCats, live] = await liveP;
     if (onLive) onLive(this.buildCatalog(liveCats, [], [], live, [], [], true));
     const [vodCats, seriesCats, vod, series] = await restP;
-    return this.buildCatalog(liveCats, vodCats, seriesCats, live, vod, series, false);
+    return { ...this.buildCatalog(liveCats, vodCats, seriesCats, live, vod, series, false), libraryFetchedAt: Date.now() };
   }
 
   private buildCatalog(liveCats: Json[], vodCats: Json[], seriesCats: Json[], live: Json[], vod: Json[], series: Json[], pending: boolean): Catalog {

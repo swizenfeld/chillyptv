@@ -45,16 +45,27 @@ function buildIndex(c: Catalog): Indexes {
   };
 }
 
+/** Movies and series change less often than channels and are far bigger (16 + 8 MB on a large provider). */
+const LIBRARY_STALE_MS = 24 * 60 * 60 * 1000;
+
 export async function fetchCatalog(
   profile: Profile,
   signal?: AbortSignal,
   onLive?: (partial: Catalog, account: AccountInfo) => void,
+  /** Keep this catalogue's movies and series and only refresh channels. */
+  keepLibraryOf?: Catalog,
 ): Promise<{ catalog: Catalog; account: AccountInfo | null }> {
   if (profile.type === 'xtream') {
     const client = new XtreamClient(profile);
     // Login first (a wrong password should say so, not fail six list requests), then the lists.
     const account = await client.account(signal);
     const withEpg = (c: Catalog) => (profile.epgUrl ? { ...c, epgUrls: [profile.epgUrl] } : c);
+    if (keepLibraryOf) {
+      const live = await client.catalog(signal, undefined, { skipLibrary: true });
+      const k = keepLibraryOf;
+      const merged: Catalog = { ...live, categories: { ...live.categories, movie: k.categories.movie, series: k.categories.series }, movies: k.movies, series: k.series, libraryFetchedAt: k.libraryFetchedAt };
+      return { catalog: withEpg(merged), account };
+    }
     const catalog = await client.catalog(signal, onLive && ((partial) => onLive(withEpg(partial), account)));
     return { catalog: withEpg(catalog), account };
   }
@@ -130,7 +141,9 @@ export const useCatalog = create<CatalogState>()((set, get) => ({
         : (partial: Catalog, account: AccountInfo) => {
             if (!controller.signal.aborted) set({ catalog: partial, index: buildIndex(partial), account, status: 'ready' });
           };
-      const { catalog, account } = await fetchCatalog(profile, controller.signal, onLive);
+      // Routine refreshes keep movies and series for a day; the refresh button always gets everything.
+      const keep = !opts.force && current && !current.libraryPending && current.libraryFetchedAt && Date.now() - current.libraryFetchedAt < LIBRARY_STALE_MS ? current : undefined;
+      const { catalog, account } = await fetchCatalog(profile, controller.signal, onLive, keep);
       if (controller.signal.aborted) return;
       await idbSet(`catalog:${profile.id}`, catalog).catch(() => {});
       set({ catalog, index: buildIndex(catalog), account, status: 'ready', refreshing: false, error: null });

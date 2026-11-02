@@ -117,6 +117,8 @@ export interface Catalog {
   epgUrls: string[];
   /** Channels are in; movies and series are still downloading (first load of a big playlist). */
   libraryPending?: boolean;
+  /** When movies and series were last downloaded (they're refreshed less often than channels). */
+  libraryFetchedAt?: number;
 }
 
 export interface Programme {
