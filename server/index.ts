@@ -4,7 +4,7 @@ import { existsSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { handleProxy } from './proxy.js';
-import { handleProbe, handleRemux } from './remux.js';
+import { handleProbe, handleRemux, handleRemuxSubs } from './remux.js';
 import { RecordingManager, handleRecordings } from './recordings.js';
 import { StateStore, handleState } from './state.js';
 import { serveStatic } from './static.js';
@@ -63,6 +63,7 @@ async function route(req: IncomingMessage, res: ServerResponse): Promise<void> {
   if (path === '/api/proxy') return handleProxy(req, res, url.searchParams);
   if (path === '/api/remux') return handleRemux(req, res, url.searchParams);
   if (path === '/api/probe') return handleProbe(req, res, url.searchParams);
+  if (path === '/api/remux/subs') return handleRemuxSubs(req, res, url.searchParams);
   if (path === '/api/epg') return serveEpg(req, res, url.searchParams);
   if (path === '/api/sports/fixtures') return handleFixtures(req, res, url.searchParams);
   if (path === '/api/recordings' || path.startsWith('/api/recordings/')) return handleRecordings(recordings, req, res, path);

@@ -1,3 +1,4 @@
+import type { MediaProbe } from '../../shared/media';
 /** Talks to the ChillyPTV backend (proxy, remux, EPG, recordings, sync). */
 
 export interface Health {
@@ -70,24 +71,33 @@ export function imageUrl(url: string | undefined): string | undefined {
   return url;
 }
 
-export function remuxUrl(url: string, opts: { ua?: string; start?: number; transcode?: boolean; audio?: number } = {}): string {
+export function remuxUrl(url: string, opts: { ua?: string; start?: number; transcode?: boolean; audio?: number; sub?: number; sid?: string } = {}): string {
   const p = upstreamParams(url, { ua: opts.ua });
   if (opts.start) p.set('start', String(Math.floor(opts.start)));
   if (opts.transcode) p.set('video', 'transcode');
   if (opts.audio) p.set('audio', String(opts.audio));
+  if (opts.sid) p.set('sid', opts.sid);
+  if (opts.sub !== undefined && opts.sub >= 0) p.set('sub', String(opts.sub));
   return `${API}/remux?${p}`;
 }
 
-export interface ProbeResult {
-  duration: number | null;
-  streams: { type: string; codec: string; width?: number; height?: number; channels?: number; language?: string }[];
+/** WebVTT written so far by a remux session (see remuxUrl `sid`/`sub`). */
+export async function remuxSubtitles(sid: string, from: number): Promise<{ text: string; next: number; done: boolean; base: number | null } | null> {
+  try {
+    const res = await fetch(`${API}/remux/subs?${new URLSearchParams({ sid, from: String(from) })}`, { cache: 'no-store' });
+    return res.ok ? ((await res.json()) as { text: string; next: number; done: boolean; base: number | null }) : null;
+  } catch {
+    return null;
+  }
 }
 
-export async function probe(url: string, ua?: string): Promise<ProbeResult | null> {
+export type ProbeResult = MediaProbe;
+
+export async function probe(url: string, ua?: string, signal?: AbortSignal): Promise<ProbeResult | null> {
   if (!health?.ffmpeg) return null;
   const p = upstreamParams(url, { ua });
   try {
-    const res = await fetch(`${API}/probe?${p}`);
+    const res = await fetch(`${API}/probe?${p}`, { signal });
     return res.ok ? ((await res.json()) as ProbeResult) : null;
   } catch {
     return null;

@@ -1,7 +1,9 @@
 import type Hls from 'hls.js';
 import type { ErrorData, Level } from 'hls.js';
 import type Mpegts from 'mpegts.js';
-import { backendHealth, probe, proxied, remuxUrl } from '../lib/api';
+import { backendHealth, probe, proxied, remuxSubtitles, remuxUrl } from '../lib/api';
+import { cancelTracks, fileTracks, tracksRequested } from '../lib/tracks';
+import { audioLabel, lang2, subtitleLabel, type MediaProbe } from '../../shared/media';
 import { extOf } from '../lib/format';
 import type { PlayRequest } from '../lib/types';
 
@@ -93,6 +95,45 @@ export function planCandidates(req: PlayRequest, opts: { preferRemux: boolean; f
   return out;
 }
 
+/** Pseudo subtitle-menu entries for files whose tracks haven't been / couldn't be read. */
+const LOOK_FOR_TRACKS = -2;
+const NO_TRACKS = -3;
+
+/** Waits for the file's tracks, but never longer than this before playback starts. */
+const TRACKS_WAIT_MS = 6000;
+async function probeFile(url: string, ua?: string): Promise<MediaProbe | null> {
+  let timer: number | undefined;
+  const timedOut = new Promise<'timeout'>((r) => (timer = window.setTimeout(() => r('timeout'), TRACKS_WAIT_MS)));
+  const r = await Promise.race([fileTracks(url, ua, { claim: true }), timedOut]);
+  window.clearTimeout(timer);
+  if (r !== 'timeout') return r;
+  // Give up on the tracks, and stop the read so playback gets the provider connection.
+  cancelTracks(url);
+  return null;
+}
+
+/** Parses complete WebVTT cue blocks; returns the cues and the unparsed remainder. */
+export function parseVttChunk(buf: string, final: boolean): { cues: { start: number; end: number; text: string }[]; rest: string } {
+  const blocks = buf.replace(/\r/g, '').split(/\n\n+/);
+  const rest = final ? '' : (blocks.pop() ?? '');
+  const t = (x: string) => {
+    const m = x.trim().match(/^(?:(\d+):)?(\d{1,2}):(\d{2})[.,](\d{3})$/);
+    return m ? (Number(m[1] ?? 0) * 3600 + Number(m[2]) * 60 + Number(m[3]) + Number(m[4]) / 1000) : NaN;
+  };
+  const cues: { start: number; end: number; text: string }[] = [];
+  for (const b of blocks) {
+    const lines = b.split('\n');
+    const i = lines.findIndex((l) => l.includes('-->'));
+    if (i < 0) continue;
+    const [a, z] = lines[i].split('-->');
+    const start = t(a);
+    const end = t(z.trim().split(/\s+/)[0]);
+    const text = lines.slice(i + 1).join('\n').trim();
+    if (Number.isFinite(start) && Number.isFinite(end) && text) cues.push({ start, end, text });
+  }
+  return { cues, rest };
+}
+
 /**
  * Wraps hls.js / mpegts.js / native playback / server remux behind one API with
  * automatic fallback, reconnection for live streams and a virtual timeline for
@@ -118,6 +159,17 @@ export class PlaybackEngine {
   private started = false;
   private startTimer: number | undefined;
   current: Candidate | null = null;
+  /** Tracks inside a movie/episode file (ffprobe), when the server can read them. */
+  private file: MediaProbe | null = null;
+  /** A movie/episode whose tracks haven't been read yet (the subtitle menu offers to look). */
+  private fileUnchecked = false;
+  private discovering = false;
+  /** Chosen audio stream (0:a:N) and text subtitle stream (0:s:N, -1 = off) for the file. */
+  private fileAudio = 0;
+  private fileSub = -1;
+  private subTrack: TextTrack | null = null;
+  private subSid = '';
+  private subPoll: number | undefined;
 
   constructor(
     private video: HTMLVideoElement,
@@ -141,6 +193,21 @@ export class PlaybackEngine {
     this.mpegtsLib = mpegtsMod.default;
     this.mpegtsLib.LoggingControl.applyConfig({ enableAll: false, enableError: false, enableWarn: false, enableInfo: false, enableDebug: false, enableVerbose: false });
     const health = backendHealth();
+    // Movies and episodes: list the file's audio and subtitle tracks first (one short connection,
+    // closed before playback opens one, so a one-connection plan isn't exceeded).
+    // Waiting is only worth it when the tracks are already being read (the movie's page started it)
+    // or subtitles are wanted from the start; otherwise playback starts at once and the subtitle
+    // menu offers to look for tracks (reading a file takes ~4 s on a real provider).
+    const vod = this.req.kind === 'movie' || this.req.kind === 'episode';
+    if (vod && health?.ffmpeg) {
+      if (tracksRequested(this.req.url) || this.opts.preferredSubLang) {
+        this.file = await probeFile(this.req.url, this.req.userAgent);
+        if (this.destroyed) return;
+        if (this.file?.duration) this.probedDuration = this.file.duration;
+        this.pickPreferredFileTracks();
+      }
+      this.fileUnchecked = !this.file;
+    }
     this.candidates = planCandidates(this.req, {
       preferRemux: this.opts.preferRemux,
       ffmpeg: !!health?.ffmpeg,
@@ -153,8 +220,11 @@ export class PlaybackEngine {
       return;
     }
     this.offset = this.req.startAt && this.req.kind !== 'live' ? this.req.startAt : 0;
+    // A preferred non-default audio language or subtitles need the server to pick tracks.
+    if (this.fileAudio > 0 || this.fileSub >= 0) this.index = this.remuxIndex();
     this.bindVideo();
     this.load(HlsLib);
+    if (this.file) this.opts.onTracks();
   }
 
   private hlsCtor: typeof Hls | null = null;
@@ -210,6 +280,7 @@ export class PlaybackEngine {
     }
     this.current = c;
     this.kind = c.kind;
+    this.stopSubtitles();
     this.opts.onEngine(c.kind);
     this.opts.onStatus('loading');
     // A live stream that never delivers a frame (dead feed, 503, empty TS) must count as a failure;
@@ -272,7 +343,9 @@ export class PlaybackEngine {
         const lib = this.mpegtsLib!;
         let url: string;
         if (c.kind === 'remux') {
-          url = remuxUrl(c.url, { ua, start: this.offset, transcode: c.transcode });
+          const sid = this.fileSub >= 0 ? `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}` : undefined;
+          url = remuxUrl(c.url, { ua, start: this.offset, transcode: c.transcode, audio: this.fileAudio, sub: this.fileSub, sid });
+          if (sid) this.startSubtitles(sid);
           this.ensureDuration();
         } else if (this.offset > 0 && this.seekUrl) {
           url = proxied(this.seekUrl(this.offset) ?? c.url, { ua, ref });
@@ -497,6 +570,7 @@ export class PlaybackEngine {
   // ------------------------------------------------------------------ tracks
   audioTracks(): TrackInfo[] {
     if (this.hls) return this.hls.audioTracks.map((t, i) => ({ id: i, label: t.name || t.lang || `Track ${i + 1}`, lang: t.lang }));
+    if (this.file && this.file.audio.length > 1) return this.menuOrder(this.file.audio.map((a) => ({ id: a.index, label: audioLabel(a), lang: a.lang })), this.opts.preferredAudioLang);
     const native = (this.video as HTMLVideoElement & { audioTracks?: { length: number; [i: number]: { label: string; language: string; enabled: boolean } } }).audioTracks;
     if (native && native.length > 1) {
       return Array.from({ length: native.length }, (_, i) => ({ id: i, label: native[i].label || native[i].language || `Track ${i + 1}`, lang: native[i].language }));
@@ -506,6 +580,7 @@ export class PlaybackEngine {
 
   currentAudioTrack(): number {
     if (this.hls) return this.hls.audioTrack;
+    if (this.file && this.file.audio.length > 1) return this.fileAudio;
     const native = (this.video as HTMLVideoElement & { audioTracks?: { length: number; [i: number]: { enabled: boolean } } }).audioTracks;
     if (native) for (let i = 0; i < native.length; i++) if (native[i].enabled) return i;
     return -1;
@@ -516,12 +591,24 @@ export class PlaybackEngine {
       this.hls.audioTrack = id;
       return;
     }
+    if (this.file && this.file.audio.length > 1) {
+      if (id === this.fileAudio) return;
+      this.fileAudio = id;
+      this.reloadWithFileTracks();
+      return;
+    }
     const native = (this.video as HTMLVideoElement & { audioTracks?: { length: number; [i: number]: { enabled: boolean } } }).audioTracks;
     if (native) for (let i = 0; i < native.length; i++) native[i].enabled = i === id;
   }
 
   subtitleTracks(): TrackInfo[] {
     if (this.hls) return this.hls.subtitleTracks.map((t, i) => ({ id: i, label: t.name || t.lang || `Subtitle ${i + 1}`, lang: t.lang }));
+    if (this.fileUnchecked) return [{ id: LOOK_FOR_TRACKS, label: 'Look for subtitles and audio…' }];
+    // Picture subtitles (PGS, VobSub) can't be turned into text, so only text ones are offered.
+    if (this.file && this.checkedOnRequest && !this.file.subtitles.some((t) => t.text)) {
+      return [{ id: NO_TRACKS, label: this.file.subtitles.length ? 'Only picture subtitles, which can’t be shown' : 'No subtitles in this file' }];
+    }
+    if (this.file?.subtitles.length) return this.menuOrder(this.file.subtitles.filter((t) => t.text).map((t) => ({ id: t.index, label: subtitleLabel(t), lang: t.lang })), this.opts.preferredSubLang);
     const tt = this.video.textTracks;
     const out: TrackInfo[] = [];
     for (let i = 0; i < tt.length; i++) if (tt[i].kind === 'subtitles' || tt[i].kind === 'captions') out.push({ id: i, label: tt[i].label || tt[i].language || `Subtitle ${i + 1}`, lang: tt[i].language });
@@ -530,6 +617,8 @@ export class PlaybackEngine {
 
   currentSubtitle(): number {
     if (this.hls) return this.hls.subtitleDisplay ? this.hls.subtitleTrack : -1;
+    if (this.fileUnchecked || this.checkedOnRequest) return this.file?.subtitles.length ? this.fileSub : -1;
+    if (this.file?.subtitles.length) return this.fileSub;
     const tt = this.video.textTracks;
     for (let i = 0; i < tt.length; i++) if (tt[i].mode === 'showing') return i;
     return -1;
@@ -539,6 +628,18 @@ export class PlaybackEngine {
     if (this.hls) {
       this.hls.subtitleTrack = id;
       this.hls.subtitleDisplay = id >= 0;
+      return;
+    }
+    if (id === NO_TRACKS) return;
+    if (id === LOOK_FOR_TRACKS) {
+      void this.lookForTracks();
+      return;
+    }
+    if (this.file?.subtitles.length) {
+      if (id === this.fileSub) return;
+      this.fileSub = id;
+      if (id < 0) this.stopSubtitles(); // keep playing; just stop showing
+      else this.reloadWithFileTracks();
       return;
     }
     const tt = this.video.textTracks;
@@ -556,6 +657,122 @@ export class PlaybackEngine {
 
   setLevel(id: number): void {
     if (this.hls) this.hls.currentLevel = id;
+  }
+
+  // ------------------------------------------------------- file tracks (VOD)
+  /**
+   * Files often carry 15–40 subtitle tracks: the preferred language comes first, then the rest
+   * alphabetically; repeated names ("English", "English") are numbered so they can be told apart.
+   */
+  private menuOrder(items: TrackInfo[], preferred?: string): TrackInfo[] {
+    const want = lang2(preferred) ?? preferred?.slice(0, 2).toLowerCase();
+    const sorted = [...items].sort((a, b) => Number(lang2(b.lang) === want) - Number(lang2(a.lang) === want) || a.label.localeCompare(b.label) || a.id - b.id);
+    const seen = new Map<string, number>();
+    return sorted.map((t) => {
+      const n = (seen.get(t.label) ?? 0) + 1;
+      seen.set(t.label, n);
+      return n > 1 ? { ...t, label: `${t.label} ${n}` } : t;
+    });
+  }
+
+  /** Preferred audio language / subtitles from settings, when the file has them. */
+  private pickPreferredFileTracks(): void {
+    const f = this.file;
+    if (!f) return;
+    const want = (pref?: string) => lang2(pref) ?? pref?.slice(0, 2).toLowerCase();
+    const al = want(this.opts.preferredAudioLang);
+    if (al && f.audio.length > 1) {
+      const i = f.audio.findIndex((a) => lang2(a.lang) === al);
+      if (i > 0) this.fileAudio = i;
+    }
+    const sl = want(this.opts.preferredSubLang);
+    if (sl) {
+      const t = f.subtitles.find((x) => x.text && !x.forced && lang2(x.lang) === sl);
+      if (t) this.fileSub = t.index;
+    }
+  }
+
+  private remuxIndex(): number {
+    let i = this.candidates.findIndex((c) => c.kind === 'remux' && !c.transcode);
+    if (i < 0) {
+      this.candidates.push({ kind: 'remux', url: this.req.url, ext: this.req.ext });
+      i = this.candidates.length - 1;
+    }
+    return i;
+  }
+
+  /** The file's tracks were read because the viewer asked (not before playback). */
+  private checkedOnRequest = false;
+
+  /**
+   * Reads the file's tracks on request. Playback stops first: on a one-connection plan the read
+   * and the stream can't be open together. Then it resumes at the same spot.
+   */
+  private async lookForTracks(): Promise<void> {
+    if (this.discovering || !this.fileUnchecked) return;
+    this.discovering = true;
+    this.offset = this.currentTime;
+    this.teardownPlayers();
+    this.opts.onStatus('loading', 'Looking for subtitles and audio tracks…');
+    const file = await Promise.race([fileTracks(this.req.url, this.req.userAgent, { claim: true }), new Promise<null>((r) => setTimeout(() => r(null), 25_000))]);
+    if (!file) cancelTracks(this.req.url);
+    this.discovering = false;
+    if (this.destroyed) return;
+    this.file = file;
+    this.fileUnchecked = !file;
+    this.checkedOnRequest = !!file;
+    if (file?.duration) this.probedDuration = file.duration;
+    this.pickPreferredFileTracks();
+    if (this.fileAudio > 0 || this.fileSub >= 0) this.index = this.remuxIndex();
+    this.attempts = 0;
+    this.load();
+    this.opts.onTracks();
+  }
+
+  /** Restart from the current position through the server, which picks the chosen tracks. */
+  private reloadWithFileTracks(): void {
+    if (!backendHealth()?.ffmpeg) return;
+    this.offset = this.currentTime;
+    if (this.current?.kind !== 'remux') this.index = this.remuxIndex();
+    this.attempts = 0;
+    this.load();
+    this.opts.onTracks();
+  }
+
+  /** Polls the WebVTT the server's ffmpeg writes next to the stream and adds cues as they come. */
+  private startSubtitles(sid: string): void {
+    this.subSid = sid;
+    if (!this.subTrack) this.subTrack = this.video.addTextTrack('subtitles', 'Subtitles');
+    const track = this.subTrack;
+    while (track.cues && track.cues.length) track.removeCue(track.cues[0]);
+    track.mode = 'showing';
+    let from = 0;
+    let buf = '';
+    const tick = async () => {
+      const r = await remuxSubtitles(sid, from);
+      if (!r || this.subSid !== sid || this.destroyed) return;
+      from = r.next;
+      buf += r.text;
+      // Cues carry the file's own times; the video clock starts at the first frame sent (r.base).
+      if (r.base === null && !r.done) return;
+      const base = r.base ?? 0;
+      const { cues, rest } = parseVttChunk(buf, r.done);
+      buf = rest;
+      for (const c of cues) if (c.end - base > 0) track.addCue(new VTTCue(Math.max(0, c.start - base), c.end - base, c.text));
+      if (r.done) window.clearInterval(this.subPoll);
+    };
+    window.clearInterval(this.subPoll);
+    this.subPoll = window.setInterval(() => void tick(), 1500);
+    void tick();
+  }
+
+  private stopSubtitles(): void {
+    window.clearInterval(this.subPoll);
+    this.subSid = '';
+    if (this.subTrack) {
+      while (this.subTrack.cues && this.subTrack.cues.length) this.subTrack.removeCue(this.subTrack.cues[0]);
+      this.subTrack.mode = 'disabled';
+    }
   }
 
   private applyPreferredTracks(): void {
@@ -650,6 +867,7 @@ export class PlaybackEngine {
 
   destroy(): void {
     this.destroyed = true;
+    this.stopSubtitles();
     window.clearInterval(this.watchdog);
     this.teardownPlayers();
     this.cleanup.forEach((f) => f());

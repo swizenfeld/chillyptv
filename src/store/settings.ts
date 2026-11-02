@@ -23,6 +23,10 @@ export interface Settings {
   volume: number;
   muted: boolean;
   livePreview: boolean;
+  /** Show "- NO EVENT STREAMING -" and finished event slots in Live TV. */
+  showEventSlots: boolean;
+  /** Show regional copies of a channel (55 cities of one network) as one entry with a city picker. */
+  groupRegional: boolean;
   showStats: boolean;
   epgShiftHours: number;
   epgPastDays: number;
@@ -73,6 +77,8 @@ export const DEFAULT_SETTINGS: Settings = {
   volume: 1,
   muted: false,
   livePreview: true,
+  showEventSlots: false,
+  groupRegional: true,
   showStats: false,
   epgShiftHours: 0,
   epgPastDays: 3,

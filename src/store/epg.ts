@@ -9,7 +9,8 @@ import type { Catalog, Channel, Profile, Programme } from '../lib/types';
 import { useSettings } from './settings';
 import { useLibrary } from './library';
 import { useCatalog } from './catalog';
-import { parseChannelTags } from '../../shared/channels';
+import { autoGuideKey, buildGuideResolver, listingCount, trimGuide, type GuideResolver, type GuideWant } from '../../shared/guide';
+import { eventListing } from '../../shared/events';
 import { channelTags } from '../lib/channelTags';
 
 const STALE_MS = 6 * 60 * 60 * 1000;
@@ -21,6 +22,32 @@ export interface EpgSourceStatus {
   error?: string;
 }
 
+export interface GuideOutage {
+  since: number;
+  error: string;
+}
+
+const outageKey = (profileId: string) => `chilly.guideOutage.${profileId}`;
+function readOutage(profileId: string): GuideOutage | null {
+  try {
+    return JSON.parse(localStorage.getItem(outageKey(profileId)) ?? 'null') as GuideOutage | null;
+  } catch {
+    return null;
+  }
+}
+function writeOutage(profileId: string, o: GuideOutage | null): void {
+  try {
+    if (o) localStorage.setItem(outageKey(profileId), JSON.stringify(o));
+    else localStorage.removeItem(outageKey(profileId));
+  } catch {
+    /* private mode */
+  }
+}
+
+/** While the guide is down, try again this often (and on every app start). */
+const OUTAGE_RETRY_MS = 60 * 60 * 1000;
+let lastAttempt = 0;
+
 interface EpgState {
   profileId: string | null;
   data: EpgData | null;
@@ -29,35 +56,21 @@ interface EpgState {
   version: number;
   /** Result of the last download, per guide source. */
   sources: EpgSourceStatus[];
+  /** Set while the guide can't be downloaded: since when, and why. Cleared by the next success. */
+  outage: GuideOutage | null;
   /** Forget resolved channel → guide links (after a manual fix). */
   invalidate: () => void;
-  load: (profile: Profile, catalog: Catalog, opts?: { force?: boolean }) => Promise<void>;
+  /** `force` re-downloads on the server too; `refetch` only skips the "still fresh" check. */
+  load: (profile: Profile, catalog: Catalog, opts?: { force?: boolean; refetch?: boolean }) => Promise<void>;
 }
 
-let resolver: { byId: Map<string, string>; byName: Map<string, string>; byBase: Map<string, string> } | null = null;
-const resolvedCache = new Map<string, Programme[]>();
+let resolver: GuideResolver | null = null;
+let loadGeneration = 0;
+// Keyed by channel id; the channel object is kept so a playlist refresh (new event names) recomputes.
+const resolvedCache = new Map<string, { ch: Channel; list: Programme[] }>();
 
-/**
- * Indexes guide channels by id, display name and cleaned base name ("ESPN 2 HD" → "espn 2").
- * When several guide channels share a name, the one with the most listings wins.
- */
 function buildResolver(data: EpgData): void {
-  const byId = new Map<string, string>();
-  const byName = new Map<string, string>();
-  const byBase = new Map<string, string>();
-  const size = (id: string) => data.programmes[id]?.length ?? 0;
-  const put = (m: Map<string, string>, k: string, id: string) => {
-    const prev = m.get(k);
-    if (k && (!prev || size(id) > size(prev))) m.set(k, id);
-  };
-  for (const id of Object.keys(data.programmes)) byId.set(id.toLowerCase(), id);
-  for (const ch of Object.values(data.channels)) {
-    byId.set(ch.id.toLowerCase(), ch.id);
-    put(byName, normalize(ch.name), ch.id);
-    const base = parseChannelTags(ch.name).base;
-    if (base.length >= 3) put(byBase, base, ch.id);
-  }
-  resolver = { byId, byName, byBase };
+  resolver = buildGuideResolver(data);
   resolvedCache.clear();
 }
 
@@ -71,14 +84,7 @@ export function resolveGuideKey(ch: Channel, depth = 0): string | undefined {
     const other = useCatalog.getState().index?.channelById.get(override.slice(2));
     if (other) return resolveGuideKey(other, depth + 1);
   }
-  let key = ch.epgId ? resolver.byId.get(ch.epgId.toLowerCase()) : undefined;
-  key ??= resolver.byName.get(normalize(ch.name));
-  if (!key && ch.epgId) key = resolver.byName.get(normalize(ch.epgId));
-  if (!key) {
-    const base = channelTags(ch).base;
-    if (base.length >= 3) key = resolver.byBase.get(base);
-  }
-  return key;
+  return autoGuideKey(resolver, ch.epgId, ch.name, channelTags(ch).base);
 }
 
 /** How the channel's guide was found, for the "Fix guide" dialog. */
@@ -94,26 +100,51 @@ function toProgramme(t: EpgProgrammeTuple, shiftMs: number): Programme {
   return { start: t[0] + shiftMs, end: t[1] + shiftMs, title: t[2], desc: t[3] || undefined, subtitle: t[4] || undefined, category: t[5] || undefined, episode: t[6] || undefined };
 }
 
-async function downloadEpg(url: string, profile: Profile, force: boolean): Promise<EpgData> {
+/**
+ * What the guide must cover: every playlist channel ([guide id, name]) and the guide channels
+ * picked by hand in "Fix guide". Everything else is dropped — on a big provider most of the guide
+ * describes channels the playlist doesn't have.
+ */
+function guideWants(profile: Profile, catalog: Catalog): { wants: GuideWant[]; keep: string[] } {
+  const overrides = useLibrary.getState().epgOverrides[profile.id] ?? {};
+  return {
+    wants: catalog.channels.map((c) => [c.epgId ?? '', c.name]),
+    keep: Object.values(overrides).filter((v) => v.startsWith('x:')).map((v) => v.slice(2)),
+  };
+}
+
+/** A guide plus, when the server could only serve its last good copy, why the refresh failed. */
+type Download = EpgData & { staleError?: string };
+
+async function downloadEpg(url: string, profile: Profile, catalog: Catalog, force: boolean): Promise<Download> {
   const s = useSettings.getState();
+  const { wants, keep } = guideWants(profile, catalog);
   if (proxyActive() && backendHealth()?.ok) {
-    const res = await fetch(epgEndpoint(url, { ua: profile.userAgent, past: s.epgPastDays, future: s.epgFutureDays, refresh: force }));
+    const res = await fetch(epgEndpoint(url, { ua: profile.userAgent, past: s.epgPastDays, future: s.epgFutureDays, refresh: force }), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ wants, keep }),
+    });
     if (!res.ok) {
       const body = await res.json().catch(() => ({}));
       throw new Error((body as { error?: string }).error ?? `EPG HTTP ${res.status}`);
     }
-    return (await res.json()) as EpgData;
+    const data = (await res.json()) as Download;
+    const stale = res.headers.get('X-Guide-Error');
+    if (stale) data.staleError = stale;
+    return data;
   }
   const text = await fetchUpstreamText(url, { ua: profile.userAgent });
   const now = Date.now();
-  return parseXmltv(text, { from: now - s.epgPastDays * 86_400_000, to: now + s.epgFutureDays * 86_400_000 });
+  return trimGuide(parseXmltv(text, { from: now - s.epgPastDays * 86_400_000, to: now + s.epgFutureDays * 86_400_000 }), wants, keep);
 }
 
 /** `a` (earlier source) wins for channels both have; `b` fills the rest. */
 function merge(a: EpgData, b: EpgData): EpgData {
   const programmes = { ...a.programmes };
   for (const [id, list] of Object.entries(b.programmes)) if (!programmes[id]?.length) programmes[id] = list;
-  return { channels: { ...b.channels, ...a.channels }, programmes, fetchedAt: Math.min(a.fetchedAt, b.fetchedAt) };
+  const counts = a.counts || b.counts ? { ...(b.counts ?? {}), ...(a.counts ?? {}) } : undefined;
+  return { channels: { ...b.channels, ...a.channels }, programmes, fetchedAt: Math.min(a.fetchedAt, b.fetchedAt), ...(counts ? { counts } : {}) };
 }
 
 export const useEpg = create<EpgState>()((set, get) => ({
@@ -123,6 +154,7 @@ export const useEpg = create<EpgState>()((set, get) => ({
   error: null,
   version: 0,
   sources: [],
+  outage: null,
   invalidate: () => {
     resolvedCache.clear();
     set({ version: get().version + 1 });
@@ -133,7 +165,8 @@ export const useEpg = create<EpgState>()((set, get) => ({
       resolver = null;
       resolvedCache.clear();
       xtreamCache.clear();
-      set({ profileId: profile.id, data: null, status: 'loading', error: null, version: get().version + 1 });
+      set({ profileId: profile.id, data: null, status: 'loading', error: null, version: get().version + 1, outage: readOutage(profile.id) });
+      lastAttempt = 0;
       const cached = await idbGet<EpgData>(`epg:${profile.id}`).catch(() => undefined);
       if (get().profileId !== profile.id) return;
       if (cached) {
@@ -142,7 +175,16 @@ export const useEpg = create<EpgState>()((set, get) => ({
       }
     }
     const current = get().data;
-    if (current && !opts.force && Date.now() - current.fetchedAt < STALE_MS) return;
+    // A trimmed guide must be fetched again when the playlist gains channels it has no listings for.
+    const missing = () => !!current?.counts && catalog.channels.some((ch) => {
+      const k = resolveGuideKey(ch);
+      return !!k && !current.programmes[k] && (current.counts![k] ?? 0) > 0;
+    });
+    const fresh = current && Date.now() - current.fetchedAt < STALE_MS && !missing();
+    // During an outage the saved copy may still be "fresh", but the provider is retried hourly.
+    const retryDue = !!get().outage && Date.now() - lastAttempt > OUTAGE_RETRY_MS;
+    if (!opts.force && !opts.refetch && ((fresh && !retryDue) || (get().outage && !retryDue && lastAttempt))) return;
+    lastAttempt = Date.now();
     // Provider guide first; extra sources only fill channels it lacks.
     const urls = [...new Set([...catalog.epgUrls, ...(profile.extraEpgUrls ?? [])].map((u) => u.trim()).filter(Boolean))];
     if (!urls.length) {
@@ -150,42 +192,81 @@ export const useEpg = create<EpgState>()((set, get) => ({
       return;
     }
     set({ status: current ? 'ready' : 'loading', error: null });
+    // Only the newest download may land: an older one (started before a guide channel was linked
+    // by hand) finishing last would drop that channel's listings.
+    const gen = ++loadGeneration;
     try {
       let merged: EpgData | null = null;
       const sources: EpgSourceStatus[] = [];
       for (const url of urls.slice(0, 8)) {
         try {
-          const d = await downloadEpg(url, profile, !!opts.force);
-          merged = merged ? merge(merged, d) : d;
-          sources.push({ url, ok: true, channels: Object.keys(d.programmes).length });
+          const d = await downloadEpg(url, profile, catalog, !!opts.force || retryDue);
+          const { staleError, ...guide } = d;
+          merged = merged ? merge(merged, guide) : guide;
+          // A last-good copy keeps the listings but still counts as the source being down.
+          sources.push({ url, ok: !staleError, channels: Object.keys(d.counts ?? d.programmes).length, ...(staleError ? { error: staleError } : {}) });
         } catch (e) {
           sources.push({ url, ok: false, channels: 0, error: (e as Error).message });
         }
       }
-      if (get().profileId !== profile.id) return;
-      if (!merged) throw new Error(sources.find((x) => x.error)?.error ?? 'EPG unavailable');
+      if (get().profileId !== profile.id || gen !== loadGeneration) return;
+      if (!merged) {
+        set({ sources });
+        throw new Error(sources.find((x) => x.error)?.error ?? 'EPG unavailable');
+      }
+      // Resolver and data must change together: a render in between would resolve against the
+      // new guide's keys but read the old guide's listings, and cache an empty list.
       buildResolver(merged);
+      // The provider's own guide is the first source; extra sources alone don't end an outage.
+      const providerOk = sources[0]?.ok ?? true;
+      const outage = providerOk ? null : (get().outage ?? { since: Date.now(), error: sources[0].error ?? 'unavailable' });
+      writeOutage(profile.id, outage);
+      set({ data: merged, status: 'ready', error: null, sources, version: get().version + 1, outage });
       await idbSet(`epg:${profile.id}`, merged).catch(() => {});
-      set({ data: merged, status: 'ready', error: null, sources, version: get().version + 1 });
     } catch (e) {
-      if (get().profileId !== profile.id) return;
-      set({ status: current ? 'ready' : 'error', error: (e as Error).message });
+      if (get().profileId !== profile.id || gen !== loadGeneration) return;
+      const outage = get().outage ?? { since: Date.now(), error: (e as Error).message };
+      writeOutage(profile.id, outage);
+      set({ status: current ? 'ready' : 'error', error: (e as Error).message, outage });
     }
   },
 }));
 
-/** Resolves programmes for a channel from the loaded XMLTV (sync, cached). */
+const eventCache = new WeakMap<Channel, Programme[]>();
+
+/**
+ * A listing built from an event channel's own name ("US (ESPN+ 166) | Green Bay vs. Milwaukee
+ * (2026-10-31 14:03:05)"). Keyed by channel object: a playlist refresh brings new names.
+ */
+function eventProgrammes(ch: Channel): Programme[] {
+  let list = eventCache.get(ch);
+  if (!list) {
+    const e = eventListing(ch.name);
+    list = e ? [{ start: e.start, end: e.end, title: e.title, category: e.category, fromName: true }] : [];
+    eventCache.set(ch, list);
+  }
+  return list;
+}
+
+/** Resolves programmes for a channel from the loaded XMLTV, or from its name for event channels (sync, cached). */
 export function programmesFor(ch: Channel | undefined): Programme[] {
   if (!ch) return [];
   const data = useEpg.getState().data;
-  if (!data || !resolver) return [];
+  if (!data || !resolver) return eventProgrammes(ch);
   const cached = resolvedCache.get(ch.id);
-  if (cached) return cached;
+  if (cached?.ch === ch) return cached.list;
   const key = resolveGuideKey(ch);
   const shift = useSettings.getState().epgShiftHours * 3_600_000;
-  const list = key ? (data.programmes[key] ?? []).map((t) => toProgramme(t, shift)) : [];
-  resolvedCache.set(ch.id, list);
+  let list = key ? (data.programmes[key] ?? []).map((t) => toProgramme(t, shift)) : [];
+  if (!list.length) list = eventProgrammes(ch);
+  resolvedCache.set(ch.id, { ch, list });
   return list;
+}
+
+/** Guide channels with listings, for the manual "Fix guide" picker. */
+export function guideChannelHasListings(id: string): boolean {
+  const data = useEpg.getState().data;
+  return !!data && listingCount(data, id) > 0;
 }
 
 export function nowNext(list: Programme[], now = Date.now()): { now?: Programme; next?: Programme } {

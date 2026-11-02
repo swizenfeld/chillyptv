@@ -115,6 +115,10 @@ export interface Catalog {
   movies: Movie[];
   series: SeriesItem[];
   epgUrls: string[];
+  /** Channels are in; movies and series are still downloading (first load of a big playlist). */
+  libraryPending?: boolean;
+  /** When movies and series were last downloaded (they're refreshed less often than channels). */
+  libraryFetchedAt?: number;
 }
 
 export interface Programme {
@@ -127,6 +131,8 @@ export interface Programme {
   episode?: string;
   /** Provider says an archive exists (Xtream full EPG). */
   archive?: boolean;
+  /** Read from an event channel's name, not from a TV guide. */
+  fromName?: boolean;
 }
 
 export interface AccountInfo {

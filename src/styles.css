@@ -3660,3 +3660,100 @@ textarea.input {
   background: color-mix(in oklab, var(--warn) 10%, transparent);
   font-size: 13px;
 }
+
+.other-versions {
+  margin-top: 18px;
+}
+.other-versions h3 {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 8px;
+  font-size: 12px;
+  font-weight: 650;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+.version-chip {
+  all: unset;
+  box-sizing: border-box;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: baseline;
+  gap: 8px;
+  min-height: 36px;
+  padding: 8px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  font-size: 13px;
+  max-width: 100%;
+}
+.version-chip:hover {
+  border-color: color-mix(in srgb, var(--text) 30%, transparent);
+}
+.version-chip:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.version-chip .muted {
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.track-line {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 18px;
+  margin: 2px 0 14px;
+  font-size: 13px;
+  color: var(--muted);
+}
+.track-line b {
+  color: var(--text);
+  font-weight: 600;
+  margin-right: 4px;
+}
+
+.guide-outage {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid color-mix(in srgb, var(--warn) 40%, transparent);
+  background: color-mix(in srgb, var(--warn) 10%, transparent);
+  font-size: 13px;
+  line-height: 1.45;
+}
+.guide-outage svg {
+  flex: none;
+  margin-top: 2px;
+  color: var(--warn);
+}
+
+.versions-chip {
+  margin-left: 6px;
+  font-size: 10px;
+  vertical-align: 1px;
+}
+.version-pick {
+  max-width: 320px;
+  margin: 2px 0 10px;
+}
+
+.event-title {
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.35;
+  margin: 2px 0 10px;
+}
+.sports-chips .count {
+  opacity: 0.6;
+  margin-left: 2px;
+  font-size: 11px;
+}

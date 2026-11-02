@@ -11,7 +11,13 @@ import { XtreamClient } from '../lib/xtream';
 import { backendHealth, imageUrl } from '../lib/api';
 import { Empty, Img, ProgressBar, Spinner } from '../components/ui';
 import { formatDuration, formatMinutes } from '../lib/format';
-import type { Episode, MediaInfo, SeriesDetails } from '../lib/types';
+import type { Episode, MediaInfo, Movie, SeriesDetails, SeriesItem } from '../lib/types';
+import { otherVersions } from '../lib/versions';
+import { useFileTracks } from '../lib/tracks';
+import { episodeRequest, movieRequest } from '../lib/streams';
+import { usePlayer } from '../store/player';
+import { languageName, lang2, type MediaProbe } from '../../shared/media';
+import { Languages } from 'lucide-react';
 
 function useLockGate(categoryId: string | undefined): boolean {
   const settings = useSettings();
@@ -43,6 +49,86 @@ function cssUrl(url: string | undefined): string | undefined {
 function Backdrop({ src }: { src?: string }) {
   const bg = cssUrl(src);
   return bg ? <div className="detail-backdrop" style={{ backgroundImage: bg }} /> : <div className="detail-backdrop empty" />;
+}
+
+/** The same title in other categories of the catalogue — usually other languages. */
+function OtherVersions({ kind, item }: { kind: 'movie' | 'series'; item: Movie | SeriesItem }) {
+  const catalog = useCatalog((s) => s.catalog);
+  const index = useCatalog((s) => s.index);
+  const settings = useSettings();
+  const navigate = useNavigate();
+  const versions = useMemo(() => {
+    if (!catalog || !index) return [];
+    const name = (id: string) => index.categoryById.get(id)?.name ?? '';
+    return otherVersions(kind, item, catalog, name, (id) => isUnlocked() || !isCategoryLocked(settings, id, name(id)));
+  }, [kind, item, catalog, index, settings]);
+  if (!versions.length) return null;
+  return (
+    <div className="other-versions">
+      <h3>
+        <Languages size={16} aria-hidden /> Also available
+      </h3>
+      <div className="row gap wrap">
+        {versions.map((v) => (
+          <button key={v.item.id} className="version-chip" onClick={() => navigate(`/${kind === 'movie' ? 'movies' : 'series'}/${encodeURIComponent(v.item.id)}`)} title={v.item.name}>
+            <b>{v.language ?? v.category}</b>
+            {[v.language ? v.category : '', v.quality].filter(Boolean).map((x) => (
+              <span key={x} className="muted">
+                {x}
+              </span>
+            ))}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Audio and subtitle languages in the file, read by the server while the page is open so that
+ * pressing Play doesn't wait for it. Skipped while something is playing: on a one-connection
+ * plan, reading the file would cut that stream off.
+ */
+function TrackSummary({ url, ua }: { url?: string; ua?: string }) {
+  const playing = usePlayer((s) => !!s.session);
+  const tracks = useFileTracks(playing ? undefined : url, ua);
+  const subLang = useSettings((s) => s.preferredSubLang);
+  const audioLang = useSettings((s) => s.preferredAudioLang);
+  if (!tracks) return null;
+  return <TrackLine tracks={tracks} preferred={[subLang, audioLang]} />;
+}
+
+function TrackLine({ tracks, preferred }: { tracks: MediaProbe; preferred: string[] }) {
+  const names = (codes: (string | undefined)[]) => {
+    const want = preferred.map((p) => lang2(p) ?? p).filter(Boolean);
+    const uniq = [...new Set(codes.map((c) => languageName(c)).filter(Boolean) as string[])];
+    const first = (n: string) => want.some((w) => languageName(w) === n);
+    return uniq.sort((a, b) => Number(first(b)) - Number(first(a)) || a.localeCompare(b));
+  };
+  const text = tracks.subtitles.filter((t) => t.text);
+  const subs = names(text.map((t) => t.lang));
+  const audio = names(tracks.audio.map((a) => a.lang));
+  if (!subs.length && audio.length < 2 && !tracks.subtitles.length) return null;
+  const list = (l: string[], max: number) => (l.length > max ? `${l.slice(0, max).join(', ')} +${l.length - max} more` : l.join(', '));
+  return (
+    <div className="track-line">
+      {audio.length > 1 && (
+        <span>
+          <b>Audio</b> {list(audio, 4)}
+        </span>
+      )}
+      {subs.length > 0 && (
+        <span title={subs.join(', ')}>
+          <b>Subtitles</b> {list(subs, 5)}
+        </span>
+      )}
+      {!text.length && tracks.subtitles.length > 0 && (
+        <span className="muted">
+          <b>Subtitles</b> picture-based only, which can't be shown here
+        </span>
+      )}
+    </div>
+  );
 }
 
 function trailerUrl(t?: string): string | undefined {
@@ -120,6 +206,7 @@ export function MovieDetailPage() {
               <b>Director:</b> {info.director}
             </p>
           )}
+          <TrackSummary url={loading ? undefined : movieRequest(profile, movie, { ext }).url} ua={profile.userAgent} />
           {resumable && (
             <div className="resume-bar">
               <ProgressBar value={h!.position / h!.duration} />
@@ -144,6 +231,7 @@ export function MovieDetailPage() {
               </a>
             )}
           </div>
+          <OtherVersions kind="movie" item={movie} />
           {needsRemux && backendHealth()?.ffmpeg && (
             <p className="hint">
               <Zap size={14} /> {ext!.toUpperCase()} files are converted on the fly by your ChillyPTV server if the browser cannot play them.
@@ -275,6 +363,8 @@ export function SeriesDetailPage() {
               </a>
             )}
           </div>
+          {allEpisodes.length > 0 && <TrackSummary url={episodeRequest(profile, series, allEpisodes[nextUp ?? 0]).url} ua={profile.userAgent} />}
+          <OtherVersions kind="series" item={series} />
         </div>
       </div>
       <div className="episodes">

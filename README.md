@@ -136,6 +136,7 @@ The command logs in with the same parsing and matching code the app uses. It rep
 - duplicate feeds
 - guide download size and coverage, plus the categories with no guide
 - today's football matches and the channels found for each
+- audio and subtitle tracks in a sample of movies and episodes (24 movies and 8 episodes by default, read with ffprobe if it's installed)
 - a one-channel stream check
 - timings for each step
 
@@ -146,6 +147,7 @@ Options:
 - `--epg URL` adds a guide source
 - `--leagues eng.1,esp.1` limits which competitions are checked
 - `--no-stream` skips the stream check
+- `--movies N` / `--episodes N` set how many files are checked for tracks, and `--no-media` skips that check
 - `--ua` sets the User-Agent
 
 ## Project layout

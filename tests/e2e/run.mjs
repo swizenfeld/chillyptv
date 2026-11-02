@@ -74,7 +74,7 @@ async function step(name, fn) {
 }
 
 const tsx = join(root, 'node_modules', '.bin', 'tsx');
-start(tsx, ['mock/server.ts'], { MOCK_PORT: String(MOCK_PORT) });
+start(tsx, ['mock/server.ts'], { MOCK_PORT: String(MOCK_PORT), MOCK_VOD_DELAY_MS: '4000' });
 const serverEntry = process.env.E2E_USE_SOURCE ? [tsx, ['server/index.ts']] : ['node', ['dist-server/server/index.js']];
 start(serverEntry[0], serverEntry[1], { PORT: String(APP_PORT), CHILLY_DATA_DIR: dataDir, CHILLY_STATIC_DIR: join(root, 'dist'), CHILLY_FIXTURES_BASE: `${MOCK}/espn` });
 await waitFor(`${MOCK}/`);
@@ -108,14 +108,27 @@ await step('add Xtream playlist', async () => {
   await page.getByLabel('Username').fill('demo');
   await page.getByLabel('Password').fill('demo');
   await page.getByLabel('Playlist name').fill('Mock provider');
+  const t0 = Date.now();
   await page.getByRole('button', { name: 'Add & connect' }).click();
   await page.waitForURL(`${APP}/`);
   await page.getByText('232').first().waitFor();
+  // The mock's movie list takes 4 s; channels must not wait for it.
+  if (Date.now() - t0 > 3500) throw new Error(`channels took ${Date.now() - t0} ms: Live TV waited for the movie list`);
   await page.getByText(/days left/).waitFor();
 });
 
 await step('home dashboard', async () => {
   await page.locator('.hero').waitFor();
+  // "New releases" comes from the provider's own "|EN| NEW RELEASED" category once movies arrive.
+  const row = page.locator('section.row-section', { has: page.getByRole('heading', { name: 'New releases' }) });
+  await row.locator('.poster-card').first().waitFor({ timeout: 30000 });
+  const href = await row.locator('.row-link').getAttribute('href');
+  const cats = await (await fetch(`${MOCK}/player_api.php?username=demo&password=demo&action=get_vod_categories`)).json();
+  const id = cats.find((c) => c.category_name === '|EN| NEW RELEASED').category_id;
+  if (!href.includes(`cat=${id}`)) throw new Error(`New releases links to ${href}`);
+  const vod = await (await fetch(`${MOCK}/player_api.php?username=demo&password=demo&action=get_vod_streams&category_id=${id}`)).json();
+  const first = vod.sort((a, b) => b.added - a.added)[0].name;
+  await row.locator('.poster-title').first().getByText(first, { exact: true }).waitFor();
   await page.screenshot({ path: join(OUT, '01-home.png') });
 });
 
@@ -223,13 +236,18 @@ await step('backup feed takes over when a match stream dies', async () => {
 await step('guide fixes: extra source and manual link', async () => {
   await page.goto(`${APP}/settings`);
   const card = page.locator('section.card', { has: page.getByRole('heading', { name: 'TV guide' }) });
-  await card.locator('.guide-sources .value').waitFor();
-  const before = await card.locator('.guide-sources .value').textContent();
+  await card.locator('.guide-sources .value').first().waitFor();
+  const before = await card.locator('.guide-sources .value').first().textContent();
   await card.locator('textarea').fill(`${MOCK}/extra-epg.xml.gz`);
   await card.getByRole('button', { name: 'Save and load' }).click();
   await page.waitForFunction(() => document.querySelectorAll('.source-list li').length >= 2, null, { timeout: 60000 });
   await page.waitForFunction((b) => document.querySelector('.guide-sources .value')?.textContent !== b, before, { timeout: 30000 });
-  if (!/\(100%\)/.test(await card.locator('.guide-sources .value').textContent())) throw new Error('coverage did not reach 100%');
+  // The extra source fills the 27 music channels; the 4 event slots have no guide anywhere.
+  const covered = (t) => Number(t.replace(/,/g, '').match(/^(\d+)/)[1]);
+  const after = await card.locator('.guide-sources .value').first().textContent();
+  if (covered(after) - covered(before) !== 27) throw new Error(`coverage ${before} → ${after}`);
+  // ...two of them get a listing from their own name (one has no time, one is an empty slot).
+  await card.locator('.from-name', { hasText: '2 listed from their names' }).waitFor();
   // A news channel relinked by hand to another guide channel, then reset.
   await page.goto(`${APP}/live`);
   await page.locator('.cat-item', { hasText: 'News' }).click();
@@ -242,6 +260,199 @@ await step('guide fixes: extra source and manual link', async () => {
   await page.getByText('You linked this channel to').waitFor();
   await page.getByRole('button', { name: 'Use automatic matching' }).click();
   await page.locator('.toast', { hasText: 'back to automatic' }).waitFor();
+});
+
+await step('guide trimmed to the playlist; event channels listed from their names', async () => {
+  // The server keeps listings only for linked guide channels, but still names every guide channel.
+  const epgUrl = `${APP}/api/epg?${new URLSearchParams({ url: `${MOCK}/xmltv.php?username=demo&password=demo` })}`;
+  const full = await fetch(epgUrl);
+  const fullData = await full.json();
+  const trimmed = await fetch(epgUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ wants: [['ch1.mock', 'Metro News 1']], keep: ['unlisted.3'] }) });
+  const data = await trimmed.json();
+  const kept = Object.keys(data.programmes).sort().join(',');
+  if (kept !== 'ch1.mock,unlisted.3') throw new Error(`trimmed guide kept ${kept}`);
+  if (Object.keys(data.channels).length !== Object.keys(fullData.channels).length || !data.counts['unlisted.9']) throw new Error('trimmed guide lost guide channel names or counts');
+  // The app's own guide has none of the 60 unlisted channels...
+  await page.goto(`${APP}/live`);
+  // ...yet "Fix guide" still offers them, and linking one fetches its listings.
+  await page.locator('.cat-item', { hasText: 'News' }).click();
+  await page.locator('.channel-row').nth(6).click();
+  await page.getByRole('button', { name: 'Wrong guide? Fix it' }).click();
+  await page.locator('.modal input[aria-label="Search"]').fill('Unlisted Regional 7');
+  const option = page.locator('.modal .overlay-ch', { hasText: 'unlisted.7' });
+  await option.getByText(/\d+ listings/).waitFor();
+  await option.click();
+  await page.locator('.epg-list, .channel-epg').getByText('Regional Hour 7').first().waitFor({ timeout: 30000 });
+  await page.getByRole('button', { name: 'Wrong guide? Fix it' }).click();
+  await page.getByRole('button', { name: 'Use automatic matching' }).click();
+  // An event slot with no guide gets its listing from the name.
+  await page.locator('.cat-item', { hasText: /^\s*Sports\s*\d+\s*$/ }).click();
+  await page.locator('.channel-row', { hasText: 'Peacock 013' }).click();
+  await page.getByText('Aston Villa v. Fulham').first().waitFor();
+  await page.screenshot({ path: join(OUT, '07c-event-listing.png') });
+});
+
+await step('movie tracks: other language version, audio switch, subtitles', async () => {
+  // Babel Nights has English + Spanish audio and English + Spanish subtitles; a Spanish copy sits in |LAT| ESTRENOS.
+  await page.goto(`${APP}/movies/5005`);
+  // The page reads the file's tracks while it's open, so Play doesn't wait for them.
+  await page.locator('.track-line span', { hasText: /^Subtitles English, Spanish$/ }).waitFor({ timeout: 30000 });
+  await page.locator('.track-line span', { hasText: /^Audio English, Spanish$/ }).waitFor();
+  await page.locator('.other-versions .version-chip', { hasText: 'Spanish' }).waitFor();
+  await page.screenshot({ path: join(OUT, '08b-other-versions.png') });
+  await page.locator('.other-versions .version-chip', { hasText: 'Spanish' }).click();
+  await page.waitForURL(/\/movies\/5006$/);
+  await page.goBack();
+  await page.waitForURL(/\/movies\/5005$/);
+  await page.getByRole('button', { name: /^Play$/ }).click();
+  await page.waitForURL(/\/play/);
+  await playing('.player-full video');
+  const player = page.locator('.player-full');
+  await player.hover();
+  // Audio: both file tracks are offered; picking Spanish restarts through the server at the same spot.
+  await player.getByRole('button', { name: 'Audio track' }).click();
+  await page.getByRole('menuitemradio', { name: /Spanish/ }).click();
+  await page.waitForFunction(() => document.querySelector('.player')?.getAttribute('data-engine') === 'remux', null, { timeout: 30000 });
+  await playing('.player-full video');
+  // Subtitles: cues come from the same server stream and match the position in the film.
+  await player.hover();
+  let sid = null;
+  const onReq = (r) => {
+    const m = r.url().match(/\/api\/remux\?.*\bsid=([\w-]+)/);
+    if (m) sid = m[1];
+  };
+  page.on('request', onReq);
+  await player.getByRole('button', { name: 'Subtitles' }).click();
+  await page.getByRole('menuitemradio', { name: /English/ }).click();
+  const cue = await page.waitForFunction(() => {
+    const v = document.querySelector('.player-full video');
+    const t = [...(v?.textTracks ?? [])].find((x) => x.mode === 'showing');
+    const c = t?.activeCues?.[0];
+    return c ? { text: c.text, now: v.currentTime } : null;
+  }, null, { timeout: 30000 });
+  page.off('request', onReq);
+  const { text, now } = await cue.jsonValue();
+  // The cue must be the one for this moment in the film: line n runs from (n-1)*5 s to (n-1)*5+4 s.
+  const { base } = await (await fetch(`${APP}/api/remux/subs?sid=${sid}&from=0`)).json();
+  const line = Number(text.match(/^English subtitle line (\d+)$/)?.[1]);
+  const at = base + now;
+  if (!line || at < (line - 1) * 5 - 0.3 || at > (line - 1) * 5 + 4.3) throw new Error(`cue "${text}" shown at film time ${at.toFixed(2)} s`);
+  await page.screenshot({ path: join(OUT, '08c-subtitles.png') });
+  await page.keyboard.press('Escape');
+});
+
+await step('one-connection plans: a slow track read is stopped before playback opens', async () => {
+  // Movie 5004's next request hangs for 9 s, so the track read outlasts the player's 6 s wait.
+  await fetch(`${MOCK}/__mock/slow?id=5004`);
+  const t0 = Date.now();
+  await page.goto(`${APP}/movies/5004`);
+  // Leave the page at once (as if skipping it), then play straight from the list: no read is ready.
+  await page.goto(`${APP}/movies`);
+  await page.goto(`${APP}/movies/5004`);
+  await page.getByRole('button', { name: /^Play$/ }).click();
+  await page.waitForURL(/\/play/);
+  await playing('.player-full video', 2, 40000);
+  const { requests } = await (await fetch(`${MOCK}/__mock/conns?id=5004`)).json();
+  const reads = requests.filter((r) => r.by === 'ffmpeg' && r.start >= t0 - 1000);
+  const plays = requests.filter((r) => r.by === 'player' && r.start >= t0 - 1000);
+  if (!reads.length || !plays.length) throw new Error(`expected a track read and playback, got ${JSON.stringify(requests)}`);
+  for (const p of plays) for (const r of reads) {
+    if (p.start > r.start && (r.end === 0 || p.start < r.end - 50)) throw new Error(`playback opened while a track read was still open: ${JSON.stringify({ read: r, play: p })}`);
+  }
+  await page.keyboard.press('Escape');
+});
+
+await step('subtitles on request: playback starts at once, tracks are read when asked', async () => {
+  // Movie 5012 is another two-language file. Keep its page from reading tracks, as when a movie is
+  // started from Continue watching: nothing is known, so the player must not wait.
+  await page.route('**/api/probe**', (r) => r.abort());
+  await page.goto(`${APP}/movies/5012`);
+  await page.waitForTimeout(500);
+  await page.unroute('**/api/probe**');
+  const t0 = Date.now();
+  await page.getByRole('button', { name: /^Play$/ }).click();
+  await page.waitForURL(/\/play/);
+  await playing('.player-full video');
+  if (Date.now() - t0 > 5000) throw new Error(`playback took ${Date.now() - t0} ms to start without known tracks`);
+  const player = page.locator('.player-full');
+  await player.hover();
+  await player.getByRole('button', { name: 'Subtitles' }).click();
+  await page.getByRole('menuitemradio', { name: 'Look for subtitles and audio…' }).click();
+  await playing('.player-full video');
+  await player.hover();
+  await player.getByRole('button', { name: 'Subtitles' }).click();
+  await page.getByRole('menuitemradio', { name: /^Spanish/ }).waitFor();
+  await page.getByRole('menuitemradio', { name: /^English/ }).click();
+  await page.waitForFunction(() => {
+    const t = [...(document.querySelector('.player-full video')?.textTracks ?? [])].find((x) => x.mode === 'showing');
+    return /^English subtitle line \d+$/.test(t?.activeCues?.[0]?.text ?? '');
+  }, null, { timeout: 30000 });
+  await page.keyboard.press('Escape');
+});
+
+await step('guide outage: saved copy kept, explained, and cleared when the guide returns', async () => {
+  await fetch(`${MOCK}/__mock/guide?down=1`);
+  try {
+    await page.goto(`${APP}/settings`);
+    const card = page.locator('section.card', { has: page.getByRole('heading', { name: 'TV guide' }) });
+    await card.getByRole('button', { name: 'Save and load' }).click();
+    await card.locator('.guide-outage', { hasText: 'returns “not found”' }).waitFor({ timeout: 30000 });
+    await card.locator('.guide-outage', { hasText: 'Showing the copy saved' }).waitFor();
+    // Listings from the saved copy still show in the guide.
+    await page.goto(`${APP}/guide`);
+    await page.locator('.guide-outage').waitFor();
+    await page.locator('.guide-row, .guide-ch').first().waitFor();
+  } finally {
+    await fetch(`${MOCK}/__mock/guide?down=0`);
+  }
+  await page.goto(`${APP}/settings`);
+  const card = page.locator('section.card', { has: page.getByRole('heading', { name: 'TV guide' }) });
+  await card.getByRole('button', { name: 'Save and load' }).click();
+  await page.waitForFunction(() => !document.querySelector('.guide-outage'), null, { timeout: 30000 });
+});
+
+await step('tidy Live TV: empty/finished slots hidden, regional versions grouped', async () => {
+  await page.goto(`${APP}/live`);
+  // 232 channels minus 2 hidden event slots (one empty, one ended) minus 4 grouped regional copies.
+  await page.locator('.cat-item', { hasText: 'All channels' }).getByText('226').waitFor();
+  await page.locator('.cat-item', { hasText: /^\s*Sports\s*\d+\s*$/ }).click();
+  if (await page.locator('.channel-row', { hasText: 'NO EVENT STREAMING' }).count()) throw new Error('empty event slot listed');
+  if (await page.locator('.channel-row', { hasText: 'SOCCER PPV 128' }).count()) throw new Error('finished event slot listed');
+  await page.locator('.cat-item', { hasText: 'US | Local' }).click();
+  const row = page.locator('.channel-row', { hasText: '5 versions' });
+  await row.waitFor();
+  if ((await row.locator('.ch-name').textContent()).trim().startsWith('MXC| AZTECA 7 HD') === false) throw new Error('expected the HD main version to represent the group');
+  if (await page.locator('.channel-row', { hasText: 'ALTAMIRA' }).count()) throw new Error('regional copy listed separately');
+  await row.click();
+  const pick = page.locator('.version-pick select');
+  await pick.selectOption({ label: 'Campeche' });
+  await page.locator('.preview-title', { hasText: 'MXC| AZTECA 7 (CAMPECHE)' }).waitFor();
+  await page.screenshot({ path: join(OUT, '03c-regional-versions.png') });
+  // The settings bring everything back.
+  const toggles = async () => {
+    await page.goto(`${APP}/settings`);
+    await page.getByLabel('Hide empty and finished event slots').click();
+    await page.getByLabel('Group regional versions of a channel').click();
+  };
+  await toggles();
+  await page.goto(`${APP}/live`);
+  await page.locator('.cat-item', { hasText: 'All channels' }).getByText('232').waitFor();
+  await toggles();
+});
+
+await step('events: every sport from event channels, feeds merged', async () => {
+  await page.goto(`${APP}/live?cat=__events`);
+  await page.locator('.sports-chips').waitFor();
+  // Villa v Fulham is 5½ hours away: "Later today", or folded under "Coming days" late in the day.
+  const card = page.locator('.event-card', { hasText: 'Aston Villa' });
+  if (!(await card.count())) await page.locator('.sports-fold', { hasText: 'Coming days' }).click();
+  await card.waitFor();
+  // The Peacock slot and the "LIVE | ASTON VILLA VS. FULHAM" PPV slot are one event with two feeds.
+  const feeds = await card.locator('.match-ch-name').allTextContents();
+  if (!feeds.includes('Peacock 013') || !feeds.includes('SOCCER PPV 129')) throw new Error(`feeds ${feeds}`);
+  await card.locator('.match-ch', { hasText: 'Peacock 013' }).click();
+  await page.locator('.preview-title', { hasText: 'Peacock 013' }).waitFor();
+  await page.screenshot({ path: join(OUT, '04c-events.png') });
 });
 
 await step('MPEG-TS live via mpegts.js', async () => {

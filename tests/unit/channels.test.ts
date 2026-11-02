@@ -57,6 +57,9 @@ describe('event / PPV channels (real provider names)', () => {
     // "(ESP)" is the league's country here; the feed is English.
     expect(parseChannelTags('US (ESPN+ 011) | Soccer: Levante vs. Atlético Madrid (Levante vs. Atlético de Madrid (ESP))', 'US| ESPN PLUS').lang).toBe('en');
     expect(parseChannelTags('MXC| LAS ESTRELLAS (AGUASCALIENTES)').lang).toBe('es');
+    expect(parseChannelTags('US| ESPN DEPORTES ᴴᴰ ⁶⁰ᶠᵖˢ').lang).toBe('es');
+    expect(parseChannelTags('US| TELEMUNDO (KNSO) FRESNO').lang).toBe('es');
+    expect(parseChannelTags('US| ESPN ᴴᴰ ²⁵ᶠᵖˢ').lang).toBe('en');
   });
   it.each([
     ['ENDED | EN ESPAÑOL-LEVANTE UD VS. ATLÉTICO DE MADRID (FECHA #11) | Sat 31 Oct 08:55 EDT (US) | 8K EXCLUSIVE | US: ESPN+ PPV 6', 'ESPN+ PPV 6'],
@@ -70,5 +73,14 @@ describe('event / PPV channels (real provider names)', () => {
   });
   it('ordinary channels have no event label', () => {
     for (const n of ['LAT| TELEMUNDO ATLANTA HD', 'ARG| TNT SPORTS', 'US| ESPN PLAY EVENTS 44 HD', 'MXC| CANAL 5 (CAMARGO)', 'UK: Sky Sports Main Event']) expect(eventLabel(n)).toBeUndefined();
+  });
+});
+
+describe('bar-wrapped prefixes', () => {
+  it('reads "|EN| …" like "EN| …", but never takes a leading word as a prefix', () => {
+    expect(parseChannelTags('Dune Part Two', '|EN| NEW RELEASED').lang).toBe('en');
+    expect(parseChannelTags('|LAT| Babel Nights').region).toBe('LAT');
+    expect(parseChannelTags('US Open Tennis').region).toBeUndefined();
+    expect(parseChannelTags('US Open Tennis').base).toBe('us open tennis');
   });
 });

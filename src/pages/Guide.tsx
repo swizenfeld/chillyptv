@@ -1,3 +1,4 @@
+import { GuideOutageNote } from '../components/GuideOutage';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { CalendarClock, Search } from 'lucide-react';
@@ -134,6 +135,7 @@ export function GuidePage() {
           Now
         </button>
       </div>
+      <GuideOutageNote />
       {!channels.length ? (
         <Empty icon={<CalendarClock size={36} />} title="No guide data">
           <p>{epgError ?? 'Your provider did not supply an EPG for these channels. You can set an XMLTV URL in the playlist settings.'}</p>
