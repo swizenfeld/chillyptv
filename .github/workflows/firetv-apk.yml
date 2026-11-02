@@ -29,20 +29,22 @@ jobs:
   apk:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: 22
           cache: npm
 
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: 21
           cache: gradle
 
-      - uses: android-actions/setup-android@v3
+      # GitHub's Ubuntu runners ship the Android SDK; add the platform this app compiles against.
+      - name: Android SDK platform 36
+        run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-36" "build-tools;36.0.0" > /dev/null
 
       - name: Build the web app
         run: |
@@ -61,7 +63,7 @@ jobs:
       - name: Name it
         run: cp android/app/build/outputs/apk/debug/app-debug.apk ChillyPTV.apk
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         with:
           name: ChillyPTV-${{ github.run_number }}
           path: ChillyPTV.apk
