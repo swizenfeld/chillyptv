@@ -15,8 +15,11 @@ export function RowLink({ to, children = 'See all' }: { to: string; children?: R
   );
 }
 
-/** Horizontal content row with paging arrows on pointer devices. */
-export function Row({ title, action, children }: { title: ReactNode; action?: ReactNode; children: ReactNode }) {
+/**
+ * Horizontal content row with paging arrows on pointer devices. `seeAll` adds "See all" both beside
+ * the title (mouse) and as the row's last tile, where a remote reaches it by pressing Right.
+ */
+export function Row({ title, action, seeAll, children }: { title: ReactNode; action?: ReactNode; seeAll?: string; children: ReactNode }) {
   const ref = useRef<HTMLDivElement>(null);
   const [edges, setEdges] = useState({ start: true, end: true });
   const update = useCallback(() => {
@@ -41,6 +44,7 @@ export function Row({ title, action, children }: { title: ReactNode; action?: Re
       <div className="row-head inline">
         <h2>{title}</h2>
         {action}
+        {seeAll && <RowLink to={seeAll} />}
       </div>
       <div className="row-scroller">
         {!edges.start && (
@@ -48,8 +52,14 @@ export function Row({ title, action, children }: { title: ReactNode; action?: Re
             <ChevronLeft size={22} />
           </button>
         )}
-        <div className="h-scroll" ref={ref} onScroll={update}>
+        <div className="h-scroll" ref={ref} onScroll={update} data-nav-group>
           {children}
+          {seeAll && (
+            <Link className="see-all-tile" to={seeAll}>
+              <ChevronRight size={22} aria-hidden />
+              <span>See all</span>
+            </Link>
+          )}
         </div>
         {!edges.end && (
           <button className="row-arrow next" onClick={() => page(1)} aria-label="Scroll right" tabIndex={-1}>

@@ -3,6 +3,14 @@
  * the arrow keys move focus to the nearest focusable element in that direction, OK/Enter activates
  * it, and Back closes the open dialog or menu, else goes back. Lists that handle the arrows
  * themselves (the Live TV channel list) keep doing so: their handled keys are skipped here.
+ *
+ * TV conventions it follows:
+ * - Things in line with you come first: Down from a poster goes to the poster below it.
+ * - Groups ([data-nav-group]: content rows, the sidebar, category lists) remember where you were;
+ *   entering one again lands there, or on its current item (the page you're on, the category shown).
+ * - Up/Down keep the focused item in the middle of the screen, so the row title above it and the
+ *   next row stay visible; Left/Right slide a row along.
+ * - At the end of what's loaded (virtual grids), the list scrolls on and the search is retried.
  */
 
 const FOCUSABLE = [
@@ -38,56 +46,98 @@ function candidates(): HTMLElement[] {
   return [...scope().querySelectorAll<HTMLElement>(FOCUSABLE)].filter((el) => visible(el) && !(el.getAttribute('role') === 'option' && el.closest('[role="listbox"][tabindex]')));
 }
 
+interface Box {
+  left: number;
+  right: number;
+  top: number;
+  bottom: number;
+}
+
 /**
- * The nearest candidate in `dir`: along the direction counts once, across it counts three times,
- * so moving right picks the next thing on the same row before something further down.
+ * The best candidate in `dir`. Candidates overlapping `from` across the direction (the poster right
+ * below, the button on the same line) win, nearest first; only if there are none does the closest
+ * thing at an angle count, with sideways distance weighing double.
  */
-export function nextInDirection(from: DOMRect, dir: Dir, list: { el: HTMLElement; r: DOMRect }[]): HTMLElement | null {
-  const cx = from.left + from.width / 2;
-  const cy = from.top + from.height / 2;
+export function nextInDirection(from: Box, dir: Dir, list: { el: HTMLElement; r: Box }[]): HTMLElement | null {
+  const horizontal = dir === 'left' || dir === 'right';
   let best: HTMLElement | null = null;
-  let bestScore = Infinity;
+  let bestKey: [number, number, number] = [2, Infinity, 0];
   for (const { el, r } of list) {
-    const x = r.left + r.width / 2;
-    const y = r.top + r.height / 2;
     let along: number;
-    let across: number;
-    if (dir === 'right') {
-      if (r.left < from.right - 4) continue;
-      along = r.left - from.right;
-      across = Math.max(0, Math.abs(y - cy) - (r.height + from.height) / 4);
-    } else if (dir === 'left') {
-      if (r.right > from.left + 4) continue;
-      along = from.left - r.right;
-      across = Math.max(0, Math.abs(y - cy) - (r.height + from.height) / 4);
-    } else if (dir === 'down') {
-      if (r.top < from.bottom - 4) continue;
-      along = r.top - from.bottom;
-      across = Math.max(0, Math.abs(x - cx) - (r.width + from.width) / 4);
-    } else {
-      if (r.bottom > from.top + 4) continue;
-      along = from.top - r.bottom;
-      across = Math.max(0, Math.abs(x - cx) - (r.width + from.width) / 4);
-    }
-    const score = along + across * 3;
-    if (score < bestScore) {
-      bestScore = score;
+    if (dir === 'right') along = r.left - from.right;
+    else if (dir === 'left') along = from.left - r.right;
+    else if (dir === 'down') along = r.top - from.bottom;
+    else along = from.top - r.bottom;
+    // Beyond the current item's edge (a little overlap is allowed for tight layouts).
+    const size = horizontal ? from.right - from.left : from.bottom - from.top;
+    if (along < -Math.min(8, size / 4)) continue;
+    const overlap = horizontal ? Math.min(from.bottom, r.bottom) - Math.max(from.top, r.top) : Math.min(from.right, r.right) - Math.max(from.left, r.left);
+    const gap = Math.max(0, -overlap);
+    const inLine = overlap > 0 ? 0 : 1;
+    const dist = Math.max(0, along) + (inLine ? gap * 2 : 0);
+    // In line beats at an angle; then nearer; then more overlap.
+    const key: [number, number, number] = [inLine, dist, -Math.max(0, overlap)];
+    if (key[0] < bestKey[0] || (key[0] === bestKey[0] && (key[1] < bestKey[1] - 0.5 || (Math.abs(key[1] - bestKey[1]) <= 0.5 && key[2] < bestKey[2])))) {
+      bestKey = key;
       best = el;
     }
   }
   return best;
 }
 
-function focus(el: HTMLElement): void {
+/** Last focused item per group, so going back into a row lands where you left it. */
+const remembered = new WeakMap<Element, HTMLElement>();
+
+function groupOf(el: Element): HTMLElement | null {
+  return el.closest<HTMLElement>('[data-nav-group]');
+}
+
+/** Every group around `el`, innermost first (a row inside the page area). */
+function groupsOf(el: Element): HTMLElement[] {
+  const out: HTMLElement[] = [];
+  for (let g = groupOf(el); g; g = g.parentElement ? groupOf(g.parentElement) : null) out.push(g);
+  return out;
+}
+
+/**
+ * Entering a group from outside: the outermost group entered decides (coming back from the sidebar
+ * returns to the page item you left; moving down into a row returns to that row's item), using its
+ * remembered item, else its current one (active page / category), else the geometric `target`.
+ */
+function entryPoint(target: HTMLElement, from: HTMLElement): HTMLElement {
+  const entered = groupsOf(target).filter((g) => !g.contains(from));
+  const group = entered[entered.length - 1];
+  if (!group) return target;
+  const last = remembered.get(group);
+  if (last && last !== from && last.isConnected && group.contains(last) && visible(last)) return last;
+  const current = group.querySelector<HTMLElement>('[aria-current="page"], [aria-selected="true"], .active');
+  if (current && visible(current) && current.matches(FOCUSABLE)) return current;
+  return target;
+}
+
+function focus(el: HTMLElement, dir?: Dir): void {
   if (!el.hasAttribute('tabindex') && !/^(A|BUTTON|INPUT|SELECT|TEXTAREA)$/.test(el.tagName)) el.setAttribute('tabindex', '-1');
   el.focus({ preventScroll: true });
-  el.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+  const vertical = dir === 'up' || dir === 'down' || !dir;
+  el.scrollIntoView({ block: vertical ? 'center' : 'nearest', inline: 'nearest', behavior: 'auto' });
+  for (const g of groupsOf(el)) remembered.set(g, el);
 }
 
 function typing(el: Element | null): boolean {
   if (!el) return false;
   if (el instanceof HTMLTextAreaElement) return true;
   return el instanceof HTMLInputElement && !['checkbox', 'radio', 'range', 'button', 'submit', 'color'].includes(el.type);
+}
+
+/** The nearest ancestor that scrolls along the axis of `dir`. */
+function scroller(el: HTMLElement, dir: Dir): HTMLElement | null {
+  const vertical = dir === 'up' || dir === 'down';
+  for (let p = el.parentElement; p; p = p.parentElement) {
+    const st = getComputedStyle(p);
+    const ov = vertical ? st.overflowY : st.overflowX;
+    if (/(auto|scroll)/.test(ov) && (vertical ? p.scrollHeight > p.clientHeight + 4 : p.scrollWidth > p.clientWidth + 4)) return p;
+  }
+  return null;
 }
 
 /** Closes the top dialog or menu if there is one (Escape); returns whether it did. */
@@ -98,12 +148,60 @@ export function closeOverlay(): boolean {
   return true;
 }
 
+/** Focuses the page's first content item (not the sidebar or top bar): what a TV app starts on. */
+export function focusFirstContent(): boolean {
+  if (!installed) return false;
+  const active = document.activeElement as HTMLElement | null;
+  if (active && active !== document.body && document.contains(active) && visible(active) && !active.closest('.rail')) return false;
+  const list = candidates();
+  const first = list.find((el) => el.closest('.main') && !el.closest('.topbar')) ?? list[0];
+  if (!first) return false;
+  focus(first);
+  return true;
+}
+
+function move(from: HTMLElement, dir: Dir, retry = 0, within?: HTMLElement): boolean {
+  // After scrolling a list for more items, only that list's items count: everything else moved
+  // relative to it (the sidebar would suddenly look "below").
+  const all = (within ? candidates().filter((el) => within.contains(el)) : candidates()).filter((el) => el !== from && !el.contains(from) && !from.contains(el));
+  const pick = (list: HTMLElement[]) => nextInDirection(from.getBoundingClientRect(), dir, list.map((el) => ({ el, r: el.getBoundingClientRect() })));
+  let next: HTMLElement | null;
+  if (dir === 'up' || dir === 'down') {
+    // Up/Down stay in the area you're in (the page, the sidebar): only Left/Right cross into the
+    // sidebar. Past the top of the page, things outside every area (the top bar) are next.
+    const region = groupsOf(from).at(-1);
+    next = pick(region ? all.filter((el) => region.contains(el)) : all) ?? (region ? pick(all.filter((el) => !groupOf(el))) : null);
+  } else {
+    next = pick(all);
+  }
+  if (next) {
+    focus(entryPoint(next, from), dir);
+    return true;
+  }
+  // Nothing loaded that way (a virtual grid renders as you scroll): scroll on and look again.
+  const sc = scroller(from, dir);
+  if (!sc || retry > 0) return false;
+  const before = dir === 'up' || dir === 'down' ? sc.scrollTop : sc.scrollLeft;
+  const step = (dir === 'up' || dir === 'left' ? -1 : 1) * 0.6 * (dir === 'up' || dir === 'down' ? sc.clientHeight : sc.clientWidth);
+  if (dir === 'up' || dir === 'down') sc.scrollTop += step;
+  else sc.scrollLeft += step;
+  const after = dir === 'up' || dir === 'down' ? sc.scrollTop : sc.scrollLeft;
+  if (after === before) return false;
+  requestAnimationFrame(() => requestAnimationFrame(() => move(from.isConnected ? from : sc, dir, retry + 1, sc)));
+  return true;
+}
+
 let installed = false;
 
 export function installSpatialNav(): void {
   if (installed) return;
   installed = true;
   document.documentElement.classList.add('tv-mode');
+  // Remember the item focused in a group however it got focus (mouse, Tab, a dialog closing).
+  document.addEventListener('focusin', (e) => {
+    const t = e.target;
+    if (t instanceof HTMLElement) for (const g of groupsOf(t)) remembered.set(g, t);
+  });
   document.addEventListener('keydown', (e) => {
     if (e.defaultPrevented || e.altKey || e.ctrlKey || e.metaKey) return;
     // The full-screen web player has its own keys (seek, zap, volume).
@@ -115,20 +213,12 @@ export function installSpatialNav(): void {
       const list = candidates();
       if (!list.length) return;
       const from = active && active !== document.body && list.includes(active) ? active : null;
+      e.preventDefault();
       if (!from) {
-        e.preventDefault();
-        focus(list[0]);
+        focusFirstContent() || focus(list[0]);
         return;
       }
-      const next = nextInDirection(
-        from.getBoundingClientRect(),
-        dir,
-        list.filter((el) => el !== from && !el.contains(from) && !from.contains(el)).map((el) => ({ el, r: el.getBoundingClientRect() })),
-      );
-      if (next) {
-        e.preventDefault();
-        focus(next);
-      }
+      move(from, dir);
       return;
     }
     // OK on something that isn't natively clickable by keyboard (rows, cards with roles).

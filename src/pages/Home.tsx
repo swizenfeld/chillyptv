@@ -12,7 +12,7 @@ import { useSports } from '../store/SportsProvider';
 import { MatchCard } from '../components/SportsToday';
 import { liveSession, usePlay } from '../hooks/usePlay';
 import { useParental } from '../components/Parental';
-import { LiveCard, PosterCard, Row, RowLink, WideCard, channelHue } from '../components/Cards';
+import { LiveCard, PosterCard, Row, WideCard, channelHue } from '../components/Cards';
 import { Empty, Img, ProgressBar, Spinner, useNow } from '../components/ui';
 import { VideoPlayer } from '../player/VideoPlayer';
 import { formatClock, formatDay, formatDuration, formatMinutes } from '../lib/format';
@@ -119,7 +119,7 @@ export function HomePage() {
     <div className="home">
       {heroChannel && <LiveHero profile={profile} channel={heroChannel} now={now} onWatch={() => play.playChannel(heroChannel, recentChannels.length > 1 ? recentChannels.map((c) => c.id) : undefined)} />}
 
-      <nav className="shortcuts" aria-label="Browse">
+      <nav className="shortcuts" aria-label="Browse" data-nav-group>
         {shortcuts.map((t) => (
           <button key={t.to} className="shortcut-chip" onClick={() => navigate(t.to)}>
             <t.icon size={18} aria-hidden />
@@ -147,13 +147,13 @@ export function HomePage() {
       )}
 
       {favList.length > 0 && (
-        <Row title="Favourite channels" action={<RowLink to="/live?cat=__fav" />}>
+        <Row title="Favourite channels" seeAll="/live?cat=__fav">
           {liveCards(favList)}
         </Row>
       )}
 
       {recentChannels.length > 0 && (
-        <Row title="Recently watched" action={<RowLink to="/live?cat=__recent" />}>
+        <Row title="Recently watched" seeAll="/live?cat=__recent">
           {liveCards(recentChannels)}
         </Row>
       )}
@@ -184,7 +184,7 @@ export function HomePage() {
       )}
 
       {releases.movies.length > 0 && (
-        <Row title="New releases" action={<RowLink to={releases.categoryId ? `/movies?cat=${encodeURIComponent(releases.categoryId)}&sort=added` : '/movies?sort=year'} />}>
+        <Row title="New releases" seeAll={releases.categoryId ? `/movies?cat=${encodeURIComponent(releases.categoryId)}&sort=added` : '/movies?sort=year'}>
           {releases.movies.map((m) => (
             <PosterCard key={m.id} title={m.name} image={m.poster} rating={m.rating} subtitle={m.year} onClick={() => navigate(`/movies/${encodeURIComponent(m.id)}`)} />
           ))}
@@ -192,7 +192,7 @@ export function HomePage() {
       )}
 
       {recentSeries.length > 0 && (
-        <Row title="Recently updated series" action={<RowLink to="/series" />}>
+        <Row title="Recently updated series" seeAll="/series">
           {recentSeries.map((s) => (
             <PosterCard key={s.id} title={s.name} image={s.cover} rating={s.rating} subtitle={s.year} onClick={() => navigate(`/series/${encodeURIComponent(s.id)}`)} />
           ))}
@@ -276,7 +276,7 @@ function YourTeamsRow() {
   const matches = sports.matches.filter((m) => m.followed && m.state !== 'post');
   if (!matches.length) return null;
   return (
-    <Row title="Your teams today" action={<RowLink to="/live?cat=__sports" />}>
+    <Row title="Your teams today" seeAll="/live?cat=__sports">
       {matches.map((m) => (
         <div key={m.fixture.id} className="team-row-card">
           <MatchCard m={m} compact onSelect={(ch) => play.playMatch(m, ch)} onOpen={(mm, ch) => (mm.channels.length ? play.playMatch(mm, ch) : navigate('/live?cat=__sports'))} />

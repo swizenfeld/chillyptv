@@ -1,4 +1,6 @@
-import { NavLink, Outlet, useNavigate } from 'react-router-dom';
+import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
+import { useEffect } from 'react';
+import { focusFirstContent } from '../lib/spatialNav';
 import { CalendarClock, Clapperboard, Film, Heart, History, Home, LayoutGrid, RefreshCw, Search, Settings, Snowflake, Tv, Video, UserCircle2, AlertTriangle } from 'lucide-react';
 import { useActiveProfile } from '../store/profiles';
 import { useCatalog } from '../store/catalog';
@@ -27,6 +29,15 @@ const NAV = [
 
 export function Shell() {
   const profile = useActiveProfile();
+  const location = useLocation();
+  // With remote navigation, a new page starts on its content (not the sidebar), like TV apps do.
+  useEffect(() => {
+    let tries = 0;
+    const t = window.setInterval(() => {
+      if (focusFirstContent() || ++tries > 10) window.clearInterval(t);
+    }, 120);
+    return () => window.clearInterval(t);
+  }, [location.pathname]);
   const { refreshing, error, account, status } = useCatalog();
   const epgStatus = useEpg((s) => s.status);
   const clock24 = useSettings((s) => s.clock24);
@@ -38,7 +49,7 @@ export function Shell() {
 
   return (
     <div className="shell">
-      <nav className="rail" aria-label="Main">
+      <nav className="rail" aria-label="Main" data-nav-group>
         <div className="brand" onClick={() => navigate('/')} role="button" tabIndex={0}>
           <span className="brand-mark">
             <Snowflake size={18} strokeWidth={2.4} aria-hidden />
@@ -81,7 +92,7 @@ export function Shell() {
           </button>
           <time className="clock">{formatClock(now, clock24)}</time>
         </header>
-        <main className="content">
+        <main className="content" data-nav-group>
           <SportsProvider>
             <Outlet />
           </SportsProvider>

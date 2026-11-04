@@ -3777,3 +3777,71 @@ textarea.input {
 .tv-mode .channel-row:focus-visible {
   outline-offset: -3px;
 }
+
+/* "See all" as a row's last tile: shown with remote navigation, where the link beside the
+   title is an awkward extra stop. */
+.see-all-tile {
+  display: none;
+}
+.tv-mode .see-all-tile {
+  flex: none;
+  width: 116px;
+  align-self: stretch;
+  margin-bottom: 34px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 600;
+  text-decoration: none;
+}
+.tv-mode .see-all-tile:focus-visible {
+  color: var(--text);
+  background: var(--panel-2);
+}
+.tv-mode .row-head .row-link {
+  display: none;
+}
+
+/* TV: smaller home rows so more fits on screen, with room for the focus ring and lift. */
+.tv-mode .h-scroll {
+  gap: 12px;
+  padding: 8px 6px 10px;
+  margin: -8px -6px 0;
+  scroll-padding: 0 24px;
+}
+.tv-mode .h-scroll .poster-card {
+  width: 116px;
+}
+.tv-mode .h-scroll .poster-title {
+  font-size: 12px;
+}
+.tv-mode .h-scroll .poster-sub {
+  font-size: 11px;
+}
+.tv-mode .live-card {
+  width: 210px;
+}
+.tv-mode .wide-card {
+  width: 210px;
+}
+.tv-mode .row-section {
+  margin-bottom: 18px;
+}
+.tv-mode .row-head {
+  margin-bottom: 6px;
+}
+.tv-mode .row-head h2 {
+  font-size: 17px;
+}
+
+/* TV: a shorter billboard so the first rows show on a 1080p screen. */
+.tv-mode .hero {
+  height: clamp(260px, 50vh, 460px);
+}

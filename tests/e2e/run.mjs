@@ -485,6 +485,31 @@ await step('remote-control navigation (Fire TV style arrows/OK)', async () => {
   await playing('.player-full video');
   await page.keyboard.press('Escape');
   await page.waitForURL(/\/live/);
+  // Home rows: "See all" is the last tile of a row; rows remember where you were; Up/Down never
+  // jump into the sidebar; Left lands on the current page in the sidebar.
+  await page.goto(`${APP}/`);
+  const row = page.locator('section.row-section', { has: page.getByRole('heading', { name: 'New releases' }) });
+  await row.locator('.poster-btn').first().focus();
+  for (let i = 0; i < 25 && !(await page.evaluate(() => document.activeElement?.classList.contains('see-all-tile'))); i++) await page.keyboard.press('ArrowRight');
+  if (!(await page.evaluate(() => document.activeElement?.classList.contains('see-all-tile')))) throw new Error(`See all tile not reached: ${await focused()}`);
+  await row.locator('.poster-btn').nth(2).focus();
+  const third = await focused();
+  await page.keyboard.press('ArrowDown');
+  if (!(await page.evaluate(() => !!document.activeElement?.closest('section.row-section')))) throw new Error(`down from a row → ${await focused()}`);
+  for (let i = 0; i < 6; i++) await page.keyboard.press('ArrowDown');
+  if (await page.evaluate(() => !!document.activeElement?.closest('.rail'))) throw new Error('Down from the last row jumped into the sidebar');
+  for (let i = 0; i < 6 && !(await page.evaluate(() => !!document.activeElement?.closest('section.row-section h2, section.row-section')?.textContent?.includes('New releases'))); i++) await page.keyboard.press('ArrowUp');
+  if ((await focused()) !== third) throw new Error(`back up into New releases → ${await focused()}, expected ${third}`);
+  let leftFrom = '';
+  for (let i = 0; i < 8 && !(await page.evaluate(() => !!document.activeElement?.closest('.rail'))); i++) {
+    leftFrom = await focused();
+    await page.keyboard.press('ArrowLeft');
+  }
+  if (!(await page.evaluate(() => document.activeElement?.getAttribute('aria-current') === 'page'))) throw new Error(`left into the sidebar → ${await focused()}`);
+  await page.keyboard.press('ArrowRight');
+  if ((await focused()) !== leftFrom) throw new Error(`back from the sidebar → ${await focused()}, expected ${leftFrom}`);
+  await page.goto(`${APP}/live`);
+  await page.locator('.channel-row').first().waitFor();
   // In a dialog, the arrows stay inside it.
   await page.locator('.channel-row').nth(4).click();
   await page.getByRole('button', { name: 'Wrong guide? Fix it' }).click();
