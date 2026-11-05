@@ -9,7 +9,7 @@ import type { Catalog, Channel, Profile, Programme } from '../lib/types';
 import { useSettings } from './settings';
 import { useLibrary } from './library';
 import { useCatalog } from './catalog';
-import { autoGuideKey, buildGuideResolver, listingCount, trimGuide, type GuideResolver, type GuideWant } from '../../shared/guide';
+import { autoGuideKey, buildGuideResolver, guideChannelRegion, listingCount, regionFromUrl, trimGuide, type GuideResolver, type GuideWant } from '../../shared/guide';
 import { eventListing } from '../../shared/events';
 import { isNativeApp } from '../native/player';
 import { loadGuideNatively } from '../native/guide';
@@ -86,7 +86,8 @@ export function resolveGuideKey(ch: Channel, depth = 0): string | undefined {
     const other = useCatalog.getState().index?.channelById.get(override.slice(2));
     if (other) return resolveGuideKey(other, depth + 1);
   }
-  return autoGuideKey(resolver, ch.epgId, ch.name, channelTags(ch).base);
+  const tags = channelTags(ch);
+  return autoGuideKey(resolver, ch.epgId, ch.name, tags.base, tags.region ?? '');
 }
 
 /** How the channel's guide was found, for the "Fix guide" dialog. */
@@ -110,7 +111,10 @@ function toProgramme(t: EpgProgrammeTuple, shiftMs: number): Programme {
 function guideWants(profile: Profile, catalog: Catalog): { wants: GuideWant[]; keep: string[] } {
   const overrides = useLibrary.getState().epgOverrides[profile.id] ?? {};
   return {
-    wants: catalog.channels.map((c) => [c.epgId ?? '', c.name]),
+    wants: catalog.channels.map((c) => {
+      const region = channelTags(c).region;
+      return region ? [c.epgId ?? '', c.name, region] : [c.epgId ?? '', c.name];
+    }),
     keep: Object.values(overrides).filter((v) => v.startsWith('x:')).map((v) => v.slice(2)),
   };
 }
@@ -118,7 +122,22 @@ function guideWants(profile: Profile, catalog: Catalog): { wants: GuideWant[]; k
 /** A guide plus, when the server could only serve its last good copy, why the refresh failed. */
 type Download = EpgData & { staleError?: string };
 
+/**
+ * A country guide's channels carry its country ("ESPN 2" in an Argentina guide is Argentina's),
+ * so the combined guide still knows it once merged with the provider's.
+ */
+function tagSourceRegion<T extends EpgData>(data: T, url: string): T {
+  const region = regionFromUrl(url);
+  if (!region) return data;
+  for (const ch of Object.values(data.channels)) if (!ch.region && guideChannelRegion(ch.id, ch.name) === undefined) ch.region = region;
+  return data;
+}
+
 async function downloadEpg(url: string, profile: Profile, catalog: Catalog, force: boolean): Promise<Download> {
+  return tagSourceRegion(await fetchGuide(url, profile, catalog, force), url);
+}
+
+async function fetchGuide(url: string, profile: Profile, catalog: Catalog, force: boolean): Promise<Download> {
   const s = useSettings.getState();
   const { wants, keep } = guideWants(profile, catalog);
   if (proxyActive() && backendHealth()?.ok) {
@@ -140,7 +159,7 @@ async function downloadEpg(url: string, profile: Profile, catalog: Catalog, forc
   // The Android / Fire TV app reads the guide natively and only keeps what the playlist needs.
   if (isNativeApp()) return loadGuideNatively(url, profile.userAgent, wants, keep, { from: now - s.epgPastDays * 86_400_000, to: now + s.epgFutureDays * 86_400_000 });
   const text = await fetchUpstreamText(url, { ua: profile.userAgent });
-  return trimGuide(parseXmltv(text, { from: now - s.epgPastDays * 86_400_000, to: now + s.epgFutureDays * 86_400_000 }), wants, keep);
+  return trimGuide(parseXmltv(text, { from: now - s.epgPastDays * 86_400_000, to: now + s.epgFutureDays * 86_400_000 }), wants, keep, regionFromUrl(url));
 }
 
 /** `a` (earlier source) wins for channels both have; `b` fills the rest. */

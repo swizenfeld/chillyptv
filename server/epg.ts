@@ -1,7 +1,7 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { gzipSync } from 'node:zlib';
 import { XmltvParser, type EpgData } from '../shared/xmltv.js';
-import { trimGuide, type GuideWant } from '../shared/guide.js';
+import { regionFromUrl, trimGuide, type GuideWant } from '../shared/guide.js';
 import { isHttpUrl, readBody, sendError, userAgentFrom } from './util.js';
 import { assertAllowedTarget } from './guard.js';
 
@@ -58,7 +58,7 @@ export async function fetchXmltv(url: string, ua: string, opts: { pastDays: numb
 
 /**
  * GET  /api/epg?url=…           → the whole guide as JSON.
- * POST /api/epg?url=…  {wants: [[guideId, name], …], keep: [guideId, …]}
+ * POST /api/epg?url=…  {wants: [[guideId, name, country?], …], keep: [guideId, …]}
  *                               → only listings for those channels (see trimGuide).
  * Both are gzipped when the client accepts it.
  */
@@ -75,7 +75,7 @@ export async function serveEpg(req: IncomingMessage, res: ServerResponse, params
   if (req.method === 'POST') {
     try {
       const body = JSON.parse(await readBody(req, 16 * 1024 * 1024)) as { wants?: unknown; keep?: unknown };
-      wants = Array.isArray(body.wants) ? (body.wants as unknown[]).filter((w): w is GuideWant => Array.isArray(w) && typeof w[0] === 'string' && typeof w[1] === 'string') : [];
+      wants = Array.isArray(body.wants) ? (body.wants as unknown[]).filter((w): w is GuideWant => Array.isArray(w) && typeof w[0] === 'string' && typeof w[1] === 'string' && (w[2] === undefined || w[2] === null || typeof w[2] === 'string')) : [];
       keep = Array.isArray(body.keep) ? (body.keep as unknown[]).filter((k): k is string => typeof k === 'string') : [];
     } catch {
       return sendError(res, 400, 'Invalid JSON body');
@@ -116,7 +116,7 @@ export async function serveEpg(req: IncomingMessage, res: ServerResponse, params
     }
     entry = cache.get(key)!;
   }
-  const data = wants ? trimGuide(entry.data!, wants, keep) : entry.data!;
+  const data = wants ? trimGuide(entry.data!, wants, keep, regionFromUrl(url)) : entry.data!;
   const json = Buffer.from(JSON.stringify(data));
   const acceptsGzip = /\bgzip\b/.test(String(req.headers['accept-encoding'] ?? ''));
   const body = acceptsGzip ? gzipSync(json, { level: 6 }) : json;

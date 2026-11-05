@@ -7,6 +7,8 @@ export interface EpgChannel {
   id: string;
   name: string;
   icon?: string;
+  /** Country the guide channel is for, when its source is a country guide ("AR"). */
+  region?: string;
 }
 
 /** [start(ms), stop(ms), title, description?, subtitle?, category?, episode?] */

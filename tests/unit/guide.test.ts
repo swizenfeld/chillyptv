@@ -22,18 +22,19 @@ const guide: EpgData = {
 
 describe('guide trimming', () => {
   it('keeps listings only for linked guide channels, plus manual links', () => {
+    // "LAT| ESPN 2" never takes the US ESPN 2's listings: the guide channel of unknown country fits.
     const t = trimGuide(guide, [['', 'LAT| ESPN 2 FHD'], ['cnn.us', 'US| CNN']], ['regional.9']);
-    expect(Object.keys(t.programmes).sort()).toEqual(['cnn.us', 'espn2.us', 'regional.9']);
+    expect(Object.keys(t.programmes).sort()).toEqual(['cnn.us', 'espn2.alt', 'regional.9']);
     expect(Object.keys(t.channels)).toHaveLength(4);
     expect(t.counts).toMatchObject({ 'espn2.us': 2, 'espn2.alt': 1 });
   });
   it('resolves the same way before and after trimming', () => {
-    const t = trimGuide(guide, [['', 'LAT| ESPN 2 FHD']]);
-    const before = autoGuideKey(buildGuideResolver(guide), undefined, 'LAT| ESPN 2 FHD');
-    const after = autoGuideKey(buildGuideResolver(t), undefined, 'LAT| ESPN 2 FHD');
-    expect(before).toBe('espn2.us'); // the one with more listings
+    const t = trimGuide(guide, [['', 'ESPN 2 FHD']]);
+    const before = autoGuideKey(buildGuideResolver(guide), undefined, 'ESPN 2 FHD');
+    const after = autoGuideKey(buildGuideResolver(t), undefined, 'ESPN 2 FHD');
+    expect(before).toBe('espn2.us'); // no country: the one with more listings
     expect(after).toBe(before);
-    expect(trimGuide(t, [['', 'LAT| ESPN 2 FHD']]).counts).toEqual(t.counts);
+    expect(trimGuide(t, [['', 'ESPN 2 FHD']]).counts).toEqual(t.counts);
   });
 });
 

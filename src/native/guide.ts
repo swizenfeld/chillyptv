@@ -1,5 +1,5 @@
 import { registerPlugin } from '@capacitor/core';
-import { autoGuideKey, buildGuideResolver, type GuideWant } from '../../shared/guide';
+import { autoGuideKey, buildGuideResolver, regionFromUrl, type GuideWant } from '../../shared/guide';
 import type { EpgData } from '../../shared/xmltv';
 
 interface NativeGuidePlugin {
@@ -19,10 +19,10 @@ export async function loadGuideNatively(url: string, ua: string | undefined, wan
   const channels: EpgData['channels'] = {};
   for (const c of scan.channels) if (c.id) channels[c.id] = { id: c.id, name: c.name, icon: c.icon };
   const skeleton: EpgData = { channels, programmes: {}, counts: scan.counts, fetchedAt: Date.now() };
-  const resolver = buildGuideResolver(skeleton);
+  const resolver = buildGuideResolver(skeleton, regionFromUrl(url));
   const ids = new Set(keep.filter((id) => scan.counts[id]));
-  for (const [epgId, name] of wants) {
-    const k = autoGuideKey(resolver, epgId || undefined, name);
+  for (const [epgId, name, region] of wants) {
+    const k = autoGuideKey(resolver, epgId || undefined, name, undefined, region || undefined);
     if (k && scan.counts[k]) ids.add(k);
   }
   const { json } = await NativeGuide.programmes({ file: scan.file, ids: [...ids], from: window.from, to: window.to });

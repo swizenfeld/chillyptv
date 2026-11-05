@@ -4227,3 +4227,14 @@ textarea.input {
     transform: none !important;
   }
 }
+
+/* Suggested country guide: text on the left, the button stays beside it. */
+.setting.guide-suggestion {
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 16px;
+}
+.setting.guide-suggestion .btn {
+  flex: none;
+  white-space: nowrap;
+}
