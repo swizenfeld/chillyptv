@@ -1,3 +1,5 @@
+import { Capacitor, CapacitorHttp } from '@capacitor/core';
+import type { MediaProbe } from '../../shared/media';
 /** Talks to the ChillyPTV backend (proxy, remux, EPG, recordings, sync). */
 
 export interface Health {
@@ -70,24 +72,33 @@ export function imageUrl(url: string | undefined): string | undefined {
   return url;
 }
 
-export function remuxUrl(url: string, opts: { ua?: string; start?: number; transcode?: boolean; audio?: number } = {}): string {
+export function remuxUrl(url: string, opts: { ua?: string; start?: number; transcode?: boolean; audio?: number; sub?: number; sid?: string } = {}): string {
   const p = upstreamParams(url, { ua: opts.ua });
   if (opts.start) p.set('start', String(Math.floor(opts.start)));
   if (opts.transcode) p.set('video', 'transcode');
   if (opts.audio) p.set('audio', String(opts.audio));
+  if (opts.sid) p.set('sid', opts.sid);
+  if (opts.sub !== undefined && opts.sub >= 0) p.set('sub', String(opts.sub));
   return `${API}/remux?${p}`;
 }
 
-export interface ProbeResult {
-  duration: number | null;
-  streams: { type: string; codec: string; width?: number; height?: number; channels?: number; language?: string }[];
+/** WebVTT written so far by a remux session (see remuxUrl `sid`/`sub`). */
+export async function remuxSubtitles(sid: string, from: number): Promise<{ text: string; next: number; done: boolean; base: number | null } | null> {
+  try {
+    const res = await fetch(`${API}/remux/subs?${new URLSearchParams({ sid, from: String(from) })}`, { cache: 'no-store' });
+    return res.ok ? ((await res.json()) as { text: string; next: number; done: boolean; base: number | null }) : null;
+  } catch {
+    return null;
+  }
 }
 
-export async function probe(url: string, ua?: string): Promise<ProbeResult | null> {
+export type ProbeResult = MediaProbe;
+
+export async function probe(url: string, ua?: string, signal?: AbortSignal): Promise<ProbeResult | null> {
   if (!health?.ffmpeg) return null;
   const p = upstreamParams(url, { ua });
   try {
-    const res = await fetch(`${API}/probe?${p}`);
+    const res = await fetch(`${API}/probe?${p}`, { signal });
     return res.ok ? ((await res.json()) as ProbeResult) : null;
   } catch {
     return null;
@@ -117,7 +128,7 @@ function hostOf(url: string): string {
 export function explainSourceError(e: unknown, url: string, kind: 'xtream' | 'm3u'): Error {
   if (!(e instanceof HttpError)) return e as Error;
   const host = hostOf(url);
-  if (e.kind === 'network') return new Error(`${e.message}. Check the server address and port, and that the provider is online.`);
+  if (e.kind === 'network') return new Error(Capacitor.isNativePlatform() ? `${e.message}.` : `${e.message}. Check the server address and port, and that the provider is online.`);
   if (e.status === 404)
     return new Error(
       kind === 'xtream'
@@ -131,7 +142,53 @@ export function explainSourceError(e: unknown, url: string, kind: 'xtream' | 'm3
   return new Error(`${host} answered with HTTP ${e.status}.`);
 }
 
+/**
+ * Why Android couldn't reach a server, in words: the native HTTP layer reports Java exceptions
+ * ("Unable to resolve host …", "failed to connect … ECONNREFUSED", "timeout").
+ */
+export function nativeNetworkMessage(raw: string, url: string): string {
+  const host = hostOf(url);
+  const m = raw.toLowerCase();
+  if (/unable to resolve host|unknownhost|no address associated|eai_nodata|nodename nor servname/.test(m))
+    return `Can't find the server “${host}”. Check the address for typos; if it's right, this network may be blocking it (some internet providers block IPTV servers)`;
+  if (/econnrefused|connection refused|failed to connect/.test(m)) return `${host} refused the connection. Check the port in the address (e.g. :8080) and that the provider is online`;
+  if (/timed? ?out|timeout/.test(m)) return `${host} didn't answer in time. The provider may be down, or this network may be blocking it`;
+  if (/ssl|certificate|handshake/.test(m)) return `Secure connection to ${host} failed. Try the address with http:// instead of https://`;
+  if (/cleartext/.test(m)) return `This device refused a plain http:// connection to ${host}`;
+  return `Couldn't reach ${host} (${raw.replace(/^[\w.]+exception:\s*/i, '')})`;
+}
+
+/**
+ * Android / Fire TV app: provider requests go through the native HTTP layer directly, so a failure
+ * comes back with its real reason (the patched fetch hides it behind a generic network error).
+ */
+async function nativeFetch(url: string, ua?: string, signal?: AbortSignal): Promise<Response> {
+  if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
+  let r;
+  try {
+    r = await CapacitorHttp.request({
+      url,
+      method: 'GET',
+      headers: ua ? { 'User-Agent': ua } : {},
+      responseType: 'arraybuffer',
+      connectTimeout: 15_000,
+      readTimeout: 120_000,
+    });
+  } catch (e) {
+    throw new HttpError(0, nativeNetworkMessage((e as Error).message ?? String(e), url), 'network');
+  }
+  if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
+  // Binary bodies come back base64-encoded.
+  const data = typeof r.data === 'string' ? Uint8Array.from(atob(r.data), (c) => c.charCodeAt(0)) : new TextEncoder().encode(JSON.stringify(r.data ?? ''));
+  return new Response(r.status === 204 ? null : data, { status: r.status, headers: r.headers });
+}
+
 export async function fetchUpstream(url: string, opts: UpstreamOpts & { signal?: AbortSignal } = {}): Promise<Response> {
+  if (Capacitor.isNativePlatform()) {
+    const res = await nativeFetch(url, opts.ua ?? net.userAgent, opts.signal);
+    if (!res.ok) throw new HttpError(res.status, `Provider returned HTTP ${res.status}`, 'http');
+    return res;
+  }
   const target = proxyActive() ? `${API}/proxy?${upstreamParams(url, { ...opts, raw: true })}` : url;
   let res: Response;
   try {

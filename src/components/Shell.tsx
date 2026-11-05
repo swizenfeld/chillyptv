@@ -1,4 +1,6 @@
-import { NavLink, Outlet, useNavigate } from 'react-router-dom';
+import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
+import { useEffect } from 'react';
+import { focusFirstContent } from '../lib/spatialNav';
 import { CalendarClock, Clapperboard, Film, Heart, History, Home, LayoutGrid, RefreshCw, Search, Settings, Snowflake, Tv, Video, UserCircle2, AlertTriangle } from 'lucide-react';
 import { useActiveProfile } from '../store/profiles';
 import { useCatalog } from '../store/catalog';
@@ -8,6 +10,7 @@ import { formatClock } from '../lib/format';
 import { useNow } from './ui';
 import { backendHealth } from '../lib/api';
 import { SportsProvider } from '../store/SportsProvider';
+import { isNativeApp } from '../native/player';
 
 const NAV = [
   { to: '/', icon: Home, label: 'Home', end: true },
@@ -17,15 +20,24 @@ const NAV = [
   // "secondary" items are also Home shortcuts, so the phone bottom bar can drop them.
   { to: '/guide', icon: CalendarClock, label: 'TV Guide', secondary: true },
   { to: '/catchup', icon: History, label: 'Catch-up', secondary: true },
-  { to: '/multiview', icon: LayoutGrid, label: 'Multi-View', secondary: true },
+  { to: '/multiview', icon: LayoutGrid, label: 'Multi-View', secondary: true, webOnly: true },
   { to: '/search', icon: Search, label: 'Search' },
   { to: '/favorites', icon: Heart, label: 'Favourites' },
-  { to: '/recordings', icon: Video, label: 'Recordings', secondary: true },
+  { to: '/recordings', icon: Video, label: 'Recordings', secondary: true, webOnly: true },
   { to: '/settings', icon: Settings, label: 'Settings' },
 ];
 
 export function Shell() {
   const profile = useActiveProfile();
+  const location = useLocation();
+  // With remote navigation, a new page starts on its content (not the sidebar), like TV apps do.
+  useEffect(() => {
+    let tries = 0;
+    const t = window.setInterval(() => {
+      if (focusFirstContent() || ++tries > 10) window.clearInterval(t);
+    }, 120);
+    return () => window.clearInterval(t);
+  }, [location.pathname]);
   const { refreshing, error, account, status } = useCatalog();
   const epgStatus = useEpg((s) => s.status);
   const clock24 = useSettings((s) => s.clock24);
@@ -37,14 +49,14 @@ export function Shell() {
 
   return (
     <div className="shell">
-      <nav className="rail" aria-label="Main">
+      <nav className="rail" aria-label="Main" data-nav-group>
         <div className="brand" onClick={() => navigate('/')} role="button" tabIndex={0}>
           <span className="brand-mark">
             <Snowflake size={18} strokeWidth={2.4} aria-hidden />
           </span>
           <span className="brand-name">ChillyPTV</span>
         </div>
-        {NAV.map((n) => (
+        {NAV.filter((n) => !(n.webOnly && isNativeApp())).map((n) => (
           <NavLink key={n.to} to={n.to} end={n.end} className={({ isActive }) => `rail-item ${isActive ? 'active' : ''} ${'secondary' in n && n.secondary ? 'secondary-nav' : ''}`} title={n.label}>
             <n.icon size={20} aria-hidden />
             <span>{n.label}</span>
@@ -80,7 +92,7 @@ export function Shell() {
           </button>
           <time className="clock">{formatClock(now, clock24)}</time>
         </header>
-        <main className="content">
+        <main className="content" data-nav-group>
           <SportsProvider>
             <Outlet />
           </SportsProvider>

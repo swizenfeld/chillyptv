@@ -1,7 +1,12 @@
+import { isNativeApp } from '../native/player';
+import { feedName } from '../lib/channelTags';
+import { EventsList } from '../components/EventsList';
+import { buildEvents } from '../lib/events';
+import { tidyView, versionLabel } from '../lib/tidy';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useVirtualizer } from '@tanstack/react-virtual';
-import { Archive, Bell, BellRing, Clock, Heart, LayoutGrid, List, Maximize2, Play, Search, Star, Trophy, Tv, Wrench } from 'lucide-react';
+import { Archive, Bell, BellRing, CalendarRange, Clock, Heart, LayoutGrid, List, Maximize2, Play, Search, Star, Trophy, Tv, Wrench } from 'lucide-react';
 import { useCatalog } from '../store/catalog';
 import { useActiveProfile } from '../store/profiles';
 import { useFavorites, useHistory, useLibrary } from '../store/library';
@@ -43,6 +48,11 @@ export function useVisibleChannels(cat: string, filter: string): Channel[] {
         return unlocked || !isCategoryLocked(settings, c.categoryId, catName);
       });
     }
+    // Favourites and history show exactly what was saved; everything else uses the tidy view.
+    if (cat !== '__fav' && cat !== '__recent') {
+      const view = tidyView(catalog, settings);
+      list = list.filter((c) => !view.hidden.has(c.id));
+    }
     list = quickFilter(list, filter, (c) => `${c.num} ${c.name}`);
     if (cat !== '__fav' && cat !== '__recent') {
       if (settings.channelSort === 'name') list = [...list].sort((a, b) => a.name.localeCompare(b.name));
@@ -59,10 +69,32 @@ export function LiveTVPage() {
   const cat = params.get('cat') ?? '__all';
   const [filter, setFilter] = useState('');
   const isSports = cat === '__sports';
+  const isEvents = cat === '__events';
   const listChannels = useVisibleChannels(cat, filter);
+  const allVisible = useVisibleChannels('__all', '');
   const sports = useSports();
-  // In "Sports today" the zap/preview order is the channels carrying today's matches.
-  const channels = isSports ? sports.channels : listChannels;
+  const epgVer = useEpg((s) => s.version);
+  const minute = useNow(60_000);
+  // Events of every sport, from event channels' own names. Recomputed each minute (live/soon move on).
+  const events = useMemo(
+    () => (index ? buildEvents(allVisible, programmesFor, (c) => index.categoryById.get(c.categoryId)?.name ?? '', minute) : []),
+    [allVisible, index, epgVer, minute], // eslint-disable-line react-hooks/exhaustive-deps
+  );
+  const eventChannels = useMemo(() => {
+    const seen = new Set<string>();
+    const out: Channel[] = [];
+    for (const e of events) {
+      if (e.end <= minute) continue;
+      for (const f of e.feeds) {
+        if (seen.has(f.channel.id)) continue;
+        seen.add(f.channel.id);
+        out.push(f.channel);
+      }
+    }
+    return out;
+  }, [events, minute]);
+  // In "Sports today" and "Events" the zap/preview order is the channels carrying them.
+  const channels = isSports ? sports.channels : isEvents ? eventChannels : listChannels;
   const favs = useFavorites(profile?.id, 'live');
   const history = useHistory(profile?.id);
   const settings = useSettings();
@@ -75,12 +107,16 @@ export function LiveTVPage() {
   const [selectedId, setSelectedId] = useState<string | null>(params.get('ch'));
   const selected = (selectedId && index?.channelById.get(selectedId)) || channels[0];
   const narrow = typeof window !== 'undefined' && window.matchMedia('(max-width: 900px)').matches;
+  // The Android / Fire TV app plays full screen in the native player only (one provider connection).
+  const previewOn = settings.livePreview && !isNativeApp();
 
+  const view = useMemo(() => (catalog ? tidyView(catalog, settings) : null), [catalog, settings]);
   const counts = useMemo(() => {
     const m = new Map<string, number>();
-    if (index) for (const [k, v] of index.channelsByCategory) m.set(k, v.length);
+    if (index && view) for (const [k, v] of index.channelsByCategory) m.set(k, v.filter((c) => !view.hidden.has(c.id)).length);
     return m;
-  }, [index]);
+  }, [index, view]);
+  const versions = selected && view ? view.groups.get(view.repOf.get(selected.id) ?? '') : undefined;
 
   const parentRef = useRef<HTMLDivElement>(null);
   const virtualizer = useVirtualizer({ count: channels.length, getScrollElement: () => parentRef.current, estimateSize: () => 64, overscan: 8 });
@@ -89,7 +125,7 @@ export function LiveTVPage() {
     parentRef.current?.scrollTo({ top: 0 });
   }, [cat]);
 
-  const previewSession = useMemo(() => (profile && selected && settings.livePreview && !narrow ? liveSession(profile, selected) : null), [profile, selected, settings.livePreview, narrow]);
+  const previewSession = useMemo(() => (profile && selected && previewOn && !narrow ? liveSession(profile, selected) : null), [profile, selected, previewOn, narrow]);
 
   if (status === 'loading' && !catalog) return <Spinner label="Loading channels…" />;
   if (!catalog || !index || !profile) return null;
@@ -128,20 +164,21 @@ export function LiveTVPage() {
           setFilter('');
         }}
         special={[
-          { id: '__all', name: 'All channels', icon: <Tv size={16} />, count: catalog.channels.length },
+          { id: '__all', name: 'All channels', icon: <Tv size={16} />, count: catalog.channels.length - (view?.hidden.size ?? 0) },
           { id: '__sports', name: 'Sports today', icon: <Trophy size={16} />, count: sports.matches.filter((m) => m.state !== 'post').length },
+          { id: '__events', name: 'Events', icon: <CalendarRange size={16} />, count: events.filter((e) => e.end > minute && e.start < minute + 24 * 3_600_000).length },
           { id: '__fav', name: 'Favourites', icon: <Star size={16} />, count: favs.length },
           { id: '__recent', name: 'Recently watched', icon: <Clock size={16} />, count: history.filter((h) => h.kind === 'live').length },
-          { id: '__archive', name: 'With catch-up', icon: <Archive size={16} />, count: catalog.channels.filter((c) => c.archive).length },
+          { id: '__archive', name: 'With catch-up', icon: <Archive size={16} />, count: catalog.channels.filter((c) => c.archive && !view?.hidden.has(c.id)).length },
         ]}
       />
       <section className="channel-col">
         <div className="col-head">
           <div className="search-box">
             <Search size={16} />
-            <input value={filter} onChange={(e) => setFilter(e.target.value)} placeholder={isSports ? 'Filter teams, leagues or channels' : `Filter ${channels.length} channels`} aria-label="Filter channels" />
+            <input value={filter} onChange={(e) => setFilter(e.target.value)} placeholder={isSports ? 'Filter teams, leagues or channels' : isEvents ? 'Filter events, sports or channels' : `Filter ${channels.length} channels`} aria-label="Filter channels" />
           </div>
-          {!isSports && <select className="select" value={settings.channelSort} onChange={(e) => setSettings({ channelSort: e.target.value as typeof settings.channelSort })} aria-label="Sort channels">
+          {!isSports && !isEvents && <select className="select" value={settings.channelSort} onChange={(e) => setSettings({ channelSort: e.target.value as typeof settings.channelSort })} aria-label="Sort channels">
             <option value="default">Provider order</option>
             <option value="number">Number</option>
             <option value="name">A–Z</option>
@@ -152,8 +189,17 @@ export function LiveTVPage() {
             data={sports}
             filter={filter}
             selectedId={selected?.id}
-            onSelect={(ch, m) => (narrow || !settings.livePreview ? play.playMatch(m, ch) : setSelectedId(ch.id))}
+            onSelect={(ch, m) => (narrow || !previewOn ? play.playMatch(m, ch) : setSelectedId(ch.id))}
             onOpen={(m, ch) => play.playMatch(m, ch)}
+          />
+        ) : isEvents ? (
+          <EventsList
+            events={events}
+            filter={filter}
+            now={minute}
+            selectedId={selected?.id}
+            onSelect={(ch) => (narrow || !previewOn ? play.playChannel(ch, zapIds) : setSelectedId(ch.id))}
+            onOpen={(ch) => play.playChannel(ch, zapIds)}
           />
         ) : channels.length === 0 ? (
           <Empty icon={cat === '__fav' ? <Star size={36} /> : <List size={36} />} title={cat === '__fav' ? 'No favourite channels yet' : filter ? `No channels match “${filter}”` : 'No channels here'}>
@@ -166,7 +212,8 @@ export function LiveTVPage() {
                 const ch = channels[vi.index];
                 const nn = nowNext(programmesFor(ch), now);
                 const isFav = favs.some((f) => f.id === ch.id);
-                const active = selected?.id === ch.id;
+                // A city version picked in the panel keeps its group's row highlighted.
+                const active = selected?.id === ch.id || (!!selected && view?.repOf.get(selected.id) === ch.id);
                 return (
                   <div
                     key={ch.id}
@@ -174,7 +221,7 @@ export function LiveTVPage() {
                     aria-selected={active}
                     className={`channel-row ${active ? 'active' : ''}`}
                     style={{ transform: `translateY(${vi.start}px)`, height: vi.size }}
-                    onClick={() => (narrow || !settings.livePreview ? openFull(ch) : setSelectedId(ch.id))}
+                    onClick={() => (narrow || !previewOn ? openFull(ch) : setSelectedId(ch.id))}
                     onDoubleClick={() => openFull(ch)}
                   >
                     <span className="ch-num">{ch.num}</span>
@@ -182,6 +229,7 @@ export function LiveTVPage() {
                     <div className="ch-body">
                       <div className="ch-name">
                         {ch.name} {ch.archive && <Archive size={12} className="muted" aria-label="Catch-up available" />}
+                        {(view?.groups.get(ch.id)?.length ?? 0) > 1 && <span className="chip subtle versions-chip">{view!.groups.get(ch.id)!.length} versions</span>}
                       </div>
                       {nn.now && (
                         <div className="ch-now">
@@ -222,9 +270,21 @@ export function LiveTVPage() {
             </div>
           )}
           <div className="preview-actions">
-            <h2 className="preview-title">
-              <span className="ch-num">{selected.num}</span> {selected.name}
+            <h2 className="preview-title" title={selected.name}>
+              <span className="ch-num">{selected.num}</span> {feedName(selected)}
             </h2>
+            {versions && versions.length > 1 && (
+              <label className="field version-pick">
+                <span>City / version</span>
+                <select className="select" value={selected.id} onChange={(e) => setSelectedId(e.target.value)}>
+                  {versions.map((v) => (
+                    <option key={v.id} value={v.id}>
+                      {versionLabel(v)}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
             <div className="row gap wrap">
               <button className="btn primary" onClick={() => openFull(selected)}>
                 <Maximize2 size={16} /> Full screen
@@ -232,7 +292,7 @@ export function LiveTVPage() {
               <button className="btn" onClick={() => toggleFavorite(profile.id, { kind: 'live', id: selected.id, name: selected.name, image: selected.logo })}>
                 <Heart size={16} fill={favs.some((f) => f.id === selected.id) ? 'currentColor' : 'none'} /> Favourite
               </button>
-              <button
+              {!isNativeApp() && <button
                 className="btn"
                 onClick={() => {
                   const mv = useLibrary.getState().multiview[profile.id] ?? { layout: '4', slots: [null, null, null, null], audioSlot: 0 };
@@ -245,7 +305,7 @@ export function LiveTVPage() {
                 }}
               >
                 <LayoutGrid size={16} /> Multi-View
-              </button>
+              </button>}
             </div>
           </div>
           <ChannelEpg channel={selected} />

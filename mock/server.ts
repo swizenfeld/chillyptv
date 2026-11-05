@@ -9,7 +9,7 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { gzipSync } from 'node:zlib';
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
-import { createReadStream, existsSync, mkdirSync, statSync } from 'node:fs';
+import { createReadStream, existsSync, mkdirSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -60,6 +60,24 @@ function ensureMedia(): void {
     ff(['-f', 'lavfi', '-i', 'smptehdbars=size=854x480:rate=25', '-f', 'lavfi', '-i', 'sine=frequency=300:sample_rate=48000', '-t', '60',
       '-vf', `format=yuv420p${text('MKV AC3')}`, '-c:v', 'libx264', '-preset', 'veryfast', '-c:a', 'ac3', '-shortest', mkv]);
   }
+  // Two audio languages and two text subtitle tracks, as multi-language releases ship them.
+  const multi = join(MEDIA, 'movie-multi.mkv');
+  if (!existsSync(multi)) {
+    console.log('[mock] generating movie-multi.mkv (English + Spanish audio, English + Spanish subtitles)');
+    const srt = (lines: (i: number) => string) =>
+      Array.from({ length: 24 }, (_, i) => {
+        const t = (sec: number) => `00:${String(Math.floor(sec / 60)).padStart(2, '0')}:${String(sec % 60).padStart(2, '0')},000`;
+        return `${i + 1}\n${t(i * 5)} --> ${t(i * 5 + 4)}\n${lines(i + 1)}\n`;
+      }).join('\n');
+    writeFileSync(join(MEDIA, 'subs-en.srt'), srt((n) => `English subtitle line ${n}`));
+    writeFileSync(join(MEDIA, 'subs-es.srt'), srt((n) => `Subtítulo en español ${n}`));
+    ff(['-f', 'lavfi', '-i', 'testsrc=size=854x480:rate=25', '-f', 'lavfi', '-i', 'sine=frequency=520:sample_rate=48000', '-f', 'lavfi', '-i', 'sine=frequency=330:sample_rate=48000',
+      '-i', join(MEDIA, 'subs-en.srt'), '-i', join(MEDIA, 'subs-es.srt'), '-t', '120',
+      '-map', '0:v', '-map', '1:a', '-map', '2:a', '-map', '3:s', '-map', '4:s',
+      '-vf', `format=yuv420p${text('MULTI LANGUAGE')}`, '-c:v', 'libx264', '-preset', 'veryfast', '-g', '50', '-c:a', 'aac', '-b:a', '96k', '-c:s', 'srt',
+      '-metadata:s:a:0', 'language=eng', '-metadata:s:a:1', 'language=spa', '-metadata:s:a:1', 'title=Español Latino',
+      '-metadata:s:s:0', 'language=eng', '-metadata:s:s:1', 'language=spa', multi]);
+  }
   const ep = join(MEDIA, 'episode.mp4');
   if (!existsSync(ep)) {
     console.log('[mock] generating episode.mp4');
@@ -86,7 +104,7 @@ process.on('SIGTERM', () => process.exit(0));
 
 // ----------------------------------------------------------------- data ----
 const LIVE_CATS = ['News', 'Sports', 'Movies 24/7', 'Kids', 'Documentary', 'Music', 'UK | Entertainment', 'US | Local', 'Adult XXX'];
-const VOD_CATS = ['Action', 'Comedy', 'Drama', 'Sci-Fi', 'Family'];
+const VOD_CATS = ['Action', 'Comedy', 'Drama', 'Sci-Fi', 'Family', '|EN| NEW RELEASED', '|LAT| ESTRENOS'];
 const SERIES_CATS = ['Crime Drama', 'Sitcoms', 'Anime'];
 const WORDS = ['Global', 'Prime', 'Star', 'Nova', 'Metro', 'Pulse', 'Vista', 'Arena', 'Echo', 'Zen', 'Orbit', 'Peak', 'Wave', 'Blue', 'Fox', 'Sky'];
 const SHOWS = ['Morning Briefing', 'World Report', 'Match Day Live', 'The Late Show', 'Nature Uncovered', 'Kitchen Heroes', 'Top 40 Countdown',
@@ -121,6 +139,9 @@ const live: LiveCh[] = [];
 // and one finished. Each lists the guide title real providers might use.
 interface MockFixture { id: number; league: string; home: string; away: string; offsetMin: number; broadcasts: string[]; guide?: { ch: number; title: string }[] }
 const SPORTS_ANCHOR = Math.floor(Date.now() / (30 * 60_000)) * 30 * 60_000;
+// Regional copies of one network, as Mexican cable lineups list them ("MXC| AZTECA 7 (ALTAMIRA)").
+const localChannels = live.filter((c) => c.cat === 8);
+['MXC| AZTECA 7', 'MXC| AZTECA 7 HD', 'MXC| AZTECA 7 (ALTAMIRA)', 'MXC| AZTECA 7 (CAMPECHE)', 'MXC| AZTECA 7 (CANCUN)'].forEach((name, i) => (localChannels[i].name = name));
 const sportsChannels = live.filter((c) => c.cat === 2);
 sportsChannels[5].name = 'AR: TNT Sports HD';
 // Several feeds of one match, as big providers list them (language prefix, quality, raw feed).
@@ -133,9 +154,15 @@ sportsChannels[8].name = 'UK: Sky Sports Main Event';
 sportsChannels[9].name = 'LAT| ARG FANATIZ PPV 3: Boca vs River 20:00';
 sportsChannels[11].name = 'LAT| CONMEBOL PPV 1: Racing vs Cruzeiro';
 // US event-channel style (one slot per event, state in the name, "8K EXCLUSIVE" marketing label).
+// Times in names are US Eastern, as US-style providers stamp them.
+const eastern = (ms: number) => {
+  const p = Object.fromEntries(new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', hourCycle: 'h23', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', weekday: 'short', timeZoneName: 'short' }).formatToParts(ms).map((x) => [x.type, x.value]));
+  return { iso: `${p.year}-${p.month}-${p.day} ${p.hour}:${p.minute}:${p.second}`, short: `${p.weekday} ${+p.day} ${new Date(ms).toLocaleString('en-US', { month: 'short', timeZone: 'America/New_York' })} ${p.hour}:${p.minute} ${p.timeZoneName}` };
+};
+const VILLA_START = Math.floor(Date.now() / (30 * 60_000)) * 30 * 60_000 + 330 * 60_000;
 sportsChannels[14].name = 'End | Villa vs. Fulham | all | 31-10-2026 | 00:00 (GMT) | 8K EXCLUSIVE | US: SOCCER PPV 128';
-sportsChannels[15].name = 'US (Peacock 013) | Aston Villa v. Fulham (2026-10-31 15:30:05)';
-sportsChannels[16].name = 'LIVE | ASTON VILLA VS. FULHAM | Sat 31 Oct 16:00 EDT (US) | 8K EXCLUSIVE | US: SOCCER PPV 129';
+sportsChannels[15].name = `US (Peacock 013) | Aston Villa v. Fulham (${eastern(VILLA_START - 10 * 60_000).iso})`;
+sportsChannels[16].name = `LIVE | ASTON VILLA VS. FULHAM | ${eastern(VILLA_START).short} (US) | 8K EXCLUSIVE | US: SOCCER PPV 129`;
 sportsChannels[17].name = '- NO EVENT STREAMING - | 8K EXCLUSIVE | US: ESPN+ PPV 410';
 const FIXTURES: MockFixture[] = [
   { id: 701, league: 'eng.1', home: 'Chelsea', away: 'Manchester United', offsetMin: -40, broadcasts: ['TNT Sports'], guide: [{ ch: 0, title: 'Premier League: Chelsea v Man Utd' }, { ch: 2, title: 'Live: Chelsea vs Manchester United' }, { ch: 12, title: 'Premier League: Chelsea vs Man Utd' }, { ch: 13, title: 'Premier League: Chelsea vs Man Utd' }] },
@@ -153,17 +180,24 @@ const FIXTURES: MockFixture[] = [
 const killed = new Set<string>();
 const MUSIC_CAT = LIVE_CATS.indexOf('Music') + 1;
 for (const c of live) if (c.cat === MUSIC_CAT) c.epgId = '';
-const hasProviderGuide = (c: LiveCh) => c.cat !== MUSIC_CAT;
+// Event slots have no guide entry, as on real providers: the event is only in the channel name.
+const EVENT_SLOT_IDS = new Set(sportsChannels.slice(14, 18).map((c) => c.id));
+const hasProviderGuide = (c: LiveCh) => c.cat !== MUSIC_CAT && !EVENT_SLOT_IDS.has(c.id);
 const fixtureStart = (f: MockFixture) => SPORTS_ANCHOR + f.offsetMin * 60_000;
 
 const movies = Array.from({ length: 60 }, (_, i) => ({
   id: 5000 + i,
   name: `${['The', 'Return of the', 'Last', 'Secret', 'Midnight'][i % 5]} ${WORDS[i % WORDS.length]} ${['Protocol', 'Odyssey', 'Heist', 'Garden', 'Signal', 'Run'][i % 6]} (${2000 + (i % 25)})`,
   cat: (i % VOD_CATS.length) + 1,
-  ext: i % 7 === 3 ? 'mkv' : 'mp4',
+  ext: i % 7 === 3 || i % 7 === 5 ? 'mkv' : 'mp4',
   rating: ((i * 37) % 50) / 10 + 5,
   added: Math.floor(Date.now() / 1000) - i * 86400,
 }));
+/** Movies whose file has English + Spanish audio and subtitles (every 7th, starting with the 6th). */
+const MULTI_IDS = new Set(movies.filter((_, i) => i % 7 === 5).map((m) => m.id));
+movies[5].name = 'Babel Nights (2024)';
+// The same film in the Latin-American category, as providers list each dub separately.
+movies[6].name = 'LAT| Babel Nights (2024)';
 const series = Array.from({ length: 18 }, (_, i) => ({
   id: 9000 + i,
   name: `${WORDS[(i + 3) % WORDS.length]} ${['Detectives', 'Family', 'Academy', 'Chronicles', 'Street', 'Hospital'][i % 6]}`,
@@ -277,6 +311,9 @@ function liveStreamTs(res: ServerResponse, src: string, opts: { realtime: boolea
   res.on('close', () => p.kill('SIGKILL'));
 }
 
+/** Big providers take ~20 s for the movie list; MOCK_VOD_DELAY_MS imitates that. */
+const VOD_DELAY_MS = Number(process.env.MOCK_VOD_DELAY_MS ?? 0);
+
 function handleApi(req: IncomingMessage, res: ServerResponse, q: URLSearchParams) {
   if (q.get('username') !== USER || q.get('password') !== PASS) {
     return json(res, { user_info: { auth: 0 } });
@@ -307,6 +344,13 @@ function handleApi(req: IncomingMessage, res: ServerResponse, q: URLSearchParams
         added: '1700000000', category_id: String(c.cat), custom_sid: '', tv_archive: c.archive ? 1 : 0, direct_source: '', tv_archive_duration: c.archive ? 3 : 0,
       })));
     case 'get_vod_streams':
+      if (VOD_DELAY_MS) {
+        const now = new URLSearchParams(q);
+        now.set('action', 'get_vod_streams_now');
+        return void setTimeout(() => handleApi(req, res, now), VOD_DELAY_MS);
+      }
+    // falls through
+    case 'get_vod_streams_now':
       return json(res, movies.filter((m) => !catId || String(m.cat + 100) === catId).map((m, i) => ({
         num: i + 1, name: m.name, stream_type: 'movie', stream_id: m.id, stream_icon: `${base(req)}/poster/${m.id}.svg`, rating: m.rating.toFixed(1),
         rating_5based: (m.rating / 2).toFixed(1), added: String(m.added), category_id: String(m.cat + 100), container_extension: m.ext, custom_sid: '', direct_source: '',
@@ -325,7 +369,7 @@ function handleApi(req: IncomingMessage, res: ServerResponse, q: URLSearchParams
           plot: `${m.name} is a thrilling mock feature used to test the movie details screen, resume playback and the server-side remux for ${m.ext.toUpperCase()} files.`,
           cast: 'Jane Actor, John Performer, Max Extra', director: 'Ada Director', rating: m.rating.toFixed(1), releasedate: `${m.name.match(/\((\d{4})\)/)?.[1] ?? '2020'}-01-01`,
           duration_secs: m.ext === 'mkv' ? 60 : 90, duration: m.ext === 'mkv' ? '00:01:00' : '00:01:30', video: { codec_name: 'h264', width: 854, height: 480 },
-          audio: { codec_name: m.ext === 'mkv' ? 'ac3' : 'aac', channels: 2 }, bitrate: 1200 },
+          audio: { codec_name: m.ext === 'mkv' && !MULTI_IDS.has(m.id) ? 'ac3' : 'aac', channels: 2 }, bitrate: 1200 },
         movie_data: { stream_id: m.id, name: m.name, added: String(m.added), category_id: String(m.cat + 100), container_extension: m.ext },
       });
     }
@@ -411,9 +455,19 @@ function extraEpg(res: ServerResponse) {
   res.end(gzipSync(out.join('\n')));
 }
 
+let guideDown = false;
+
 function xmltv(_req: IncomingMessage, res: ServerResponse) {
+  if (guideDown) return res.writeHead(404, { 'Content-Type': 'text/plain' }).end('Not Found');
   const now = Date.now();
   const out = ['<?xml version="1.0" encoding="UTF-8"?>', '<tv generator-info-name="chillyptv-mock">'];
+  // Big providers' guides describe many channels the playlist doesn't carry.
+  for (let i = 1; i <= 60; i++) {
+    out.push(`<channel id="unlisted.${i}"><display-name>Unlisted Regional ${i}</display-name></channel>`);
+    for (let t = Math.floor(now / 3600_000) * 3600_000 - 86400_000; t < now + 86400_000; t += 3600_000) {
+      out.push(`<programme start="${xmltvDate(t)}" stop="${xmltvDate(t + 3600_000)}" channel="unlisted.${i}"><title>Regional Hour ${i}</title><desc>Programme on a channel this playlist does not carry, padding the guide like real providers do.</desc></programme>`);
+    }
+  }
   for (const c of live) if (hasProviderGuide(c)) out.push(`<channel id="${c.epgId}"><display-name>${escXml(c.name)}</display-name></channel>`);
   for (const c of live) {
     if (!hasProviderGuide(c)) continue;
@@ -424,6 +478,14 @@ function xmltv(_req: IncomingMessage, res: ServerResponse) {
   out.push('</tv>');
   res.writeHead(200, { 'Content-Type': 'application/xml' });
   res.end(out.join('\n'));
+}
+
+const slowOnce = new Set<number>();
+const movieConns = new Map<number, { active: number; max: number; requests: { by: string; start: number; end: number }[] }>();
+
+function serveMovie(req: IncomingMessage, res: ServerResponse, m: RegExpMatchArray): void {
+  if (MULTI_IDS.has(Number(m[1]))) return serveFile(req, res, join(MEDIA, 'movie-multi.mkv'), 'video/x-matroska');
+  return m[2] === 'mkv' ? serveFile(req, res, join(MEDIA, 'movie-ac3.mkv'), 'video/x-matroska') : serveFile(req, res, join(MEDIA, 'movie.mp4'), 'video/mp4');
 }
 
 const server = createServer((req, res) => {
@@ -441,6 +503,21 @@ const server = createServer((req, res) => {
     const id = +m[2];
     const name = movies.find((x) => x.id === id)?.name ?? series.find((x) => x.id === id)?.name ?? 'Show';
     return m[1] === 'poster' ? svg(res, name, (id * 29) % 360, 300, 450) : svg(res, name, (id * 29) % 360, 1280, 720);
+  }
+  // Test hooks for one-connection plans: /__mock/slow?id=N delays movie N's next request by 9 s;
+  // /__mock/conns?id=N reports how many requests for movie N were open at once (most and now).
+  // /__mock/guide?down=1 makes xmltv.php answer 404 like the reported provider; down=0 restores it.
+  if (p === '/__mock/guide') {
+    guideDown = url.searchParams.get('down') === '1';
+    return json(res, { guideDown });
+  }
+  if (p === '/__mock/slow') {
+    slowOnce.add(Number(url.searchParams.get('id')));
+    return json(res, { ok: true });
+  }
+  if (p === '/__mock/conns') {
+    const c = movieConns.get(Number(url.searchParams.get('id'))) ?? { active: 0, max: 0, requests: [] };
+    return json(res, c);
   }
   // Test hook: /__mock/kill?id=12 makes channel 12 fail (playlist and stream), &on=0 revives it.
   if (p === '/__mock/kill') {
@@ -464,7 +541,26 @@ const server = createServer((req, res) => {
   if (m && killed.has(url.searchParams.get('token') ?? '')) return res.writeHead(503).end();
   if (m) return serveFile(req, res, join(MEDIA, `hls-${m[1]}`, m[2]), m[2].endsWith('.m3u8') ? 'application/vnd.apple.mpegurl' : 'video/mp2t');
   m = p.match(/^\/movie\/[^/]+\/[^/]+\/(\d+)\.(\w+)$/);
-  if (m) return m[2] === 'mkv' ? serveFile(req, res, join(MEDIA, 'movie-ac3.mkv'), 'video/x-matroska') : serveFile(req, res, join(MEDIA, 'movie.mp4'), 'video/mp4');
+  if (m) {
+    const id = Number(m[1]);
+    const c = movieConns.get(id) ?? movieConns.set(id, { active: 0, max: 0, requests: [] }).get(id)!;
+    c.active++;
+    c.max = Math.max(c.max, c.active);
+    // ffmpeg/ffprobe (track reads, server remux) send Icy-MetaData; the browser's playback doesn't.
+    const r = { by: req.headers['icy-metadata'] ? 'ffmpeg' : 'player', start: Date.now(), end: 0 };
+    c.requests.push(r);
+    res.on('close', () => {
+      c.active--;
+      r.end = Date.now();
+    });
+    if (slowOnce.delete(id)) {
+      const mm = m;
+      const t = setTimeout(() => serveMovie(req, res, mm), 9000);
+      res.on('close', () => clearTimeout(t));
+      return;
+    }
+    return serveMovie(req, res, m);
+  }
   m = p.match(/^\/series\/[^/]+\/[^/]+\/(\d+)\.(\w+)$/);
   if (m) return serveFile(req, res, join(MEDIA, 'episode.mp4'), 'video/mp4');
   // Xtream timeshift: /timeshift/{user}/{pass}/{duration}/{YYYY-MM-DD:HH-MM}/{id}.ts

@@ -1,3 +1,4 @@
+import { installSpatialNav } from '../lib/spatialNav';
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { checkBackend, setNetworkConfig } from '../lib/api';
@@ -40,6 +41,11 @@ export function useBoot(): boolean {
     };
   }, []);
 
+  const remoteNav = useSettings((s) => s.remoteNav);
+  useEffect(() => {
+    if (remoteNav) installSpatialNav();
+  }, [remoteNav]);
+
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
     document.documentElement.style.setProperty('--accent', accent);
@@ -50,7 +56,11 @@ export function useBoot(): boolean {
   }, [ready, profile, loadCatalog]);
 
   useEffect(() => {
-    if (ready && profile && catalog && catalog.profileId === profile.id) void loadEpg(profile, catalog);
+    if (!ready || !profile || !catalog || catalog.profileId !== profile.id) return;
+    void loadEpg(profile, catalog);
+    // The store decides whether anything is due: a stale guide, or an hourly retry during an outage.
+    const t = setInterval(() => void loadEpg(profile, catalog), 15 * 60_000);
+    return () => clearInterval(t);
   }, [ready, profile, catalog, loadEpg]);
 
   useEffect(() => {

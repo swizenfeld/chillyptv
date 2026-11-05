@@ -207,3 +207,12 @@ describe('real provider names (diagnostic report)', () => {
     expect(channelNameScore(normalize('US (ESPN+ 011) | Soccer: Levante vs. Atlético Madrid (Levante vs. Atlético de Madrid (ESP)) (2026-10-31 08:50:30)'), f)).toBe(1);
   });
 });
+
+describe('Argentine names from the third report', () => {
+  it('event channels name these clubs the short way', () => {
+    const f = prepareFixture(fx("Newell's Old Boys", 'Unión (Santa Fe)', 'arg.1'));
+    expect(channelNameScore(normalize("ARG| FANATIZ PPV 4: NEWELL'S VS UNION"), f)).toBe(1);
+    const g = prepareFixture(fx('Lanús', 'Gimnasia (Mendoza)', 'arg.1'));
+    expect(channelNameScore(normalize('ARG| FANATIZ PPV 6: Lanus vs Gimnasia'), g)).toBe(1);
+  });
+});

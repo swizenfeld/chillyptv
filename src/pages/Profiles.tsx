@@ -6,7 +6,7 @@ import { PROFILE_COLORS, useProfiles } from '../store/profiles';
 import { useCatalog, fetchCatalog } from '../store/catalog';
 import { normalizeServer, parseXtreamLink } from '../lib/xtream';
 import { uid, relativeTime } from '../lib/format';
-import type { Profile } from '../lib/types';
+import type { AccountInfo, Catalog, Profile } from '../lib/types';
 import { Modal, Segmented } from '../components/ui';
 import { toast } from '../store/toast';
 
@@ -142,16 +142,28 @@ function ProfileEditor({ profile, onClose, onSaved }: { profile: Profile | null;
           base.m3uFileName = profile?.m3uFileName;
         }
       }
-      // Validate by actually loading the catalog once.
-      const { catalog } = await fetchCatalog(base);
+      // Validate by actually loading the catalog. Channels arrive first; on big providers the movie
+      // list takes far longer, so the dialog closes on channels and movies/series follow in the background.
+      let onChannels!: (v: { catalog: Catalog; account: AccountInfo | null }) => void;
+      const channelsFirst = new Promise<{ catalog: Catalog; account: AccountInfo | null }>((r) => (onChannels = r));
+      const full = fetchCatalog(base, undefined, (catalog, account) => onChannels({ catalog, account }));
+      full.catch(() => {}); // a later failure is handled by the catalogue store
+      let first = await Promise.race([channelsFirst, full]);
+      if (first.catalog.libraryPending && !first.catalog.channels.length) first = await full; // nothing to show yet
+      const { catalog } = first;
       const total = catalog.channels.length + catalog.movies.length + catalog.series.length;
-      if (!total) throw new Error('Logged in, but the playlist is empty.');
-      await idbSet(`catalog:${id}`, catalog).catch(() => {});
+      if (!total && !catalog.libraryPending) throw new Error('Logged in, but the playlist is empty.');
+      if (!catalog.libraryPending) await idbSet(`catalog:${id}`, catalog).catch(() => {});
       if (profile) update(profile.id, base);
       else add(base);
       useCatalog.getState().clear();
+      if (catalog.libraryPending) useCatalog.getState().adopt(id, first, full);
       useProfiles.getState().setActive(id);
-      toast.success(`${base.name}: ${catalog.channels.length} channels, ${catalog.movies.length} movies, ${catalog.series.length} series`);
+      toast.success(
+        catalog.libraryPending
+          ? `${base.name}: ${catalog.channels.length.toLocaleString()} channels. Movies and series are still loading.`
+          : `${base.name}: ${catalog.channels.length} channels, ${catalog.movies.length} movies, ${catalog.series.length} series`,
+      );
       onClose();
       onSaved();
     } catch (err) {

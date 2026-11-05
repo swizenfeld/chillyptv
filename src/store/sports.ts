@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { backendHealth } from '../lib/api';
+import { isNativeApp } from '../native/player';
+import { collectFixtures } from '../../shared/fixtures';
 import { normalize } from '../lib/search';
 import { useCatalog } from './catalog';
 import { programmesFor, useEpg } from './epg';
@@ -78,16 +80,26 @@ function useFixtureFeed(leagues: string[], enabled: boolean): FeedState {
     const load = async () => {
       const { from, to } = todayWindow();
       try {
-        const res = await fetch(`${API}/sports/fixtures?${new URLSearchParams({ leagues: key, from: String(from), to: String(to) })}`, { cache: 'no-store' });
-        const body = (await res.json()) as { fixtures?: Fixture[]; errors?: { league: string; error: string }[]; leagues?: number; error?: string };
+        let body: { fixtures?: Fixture[]; errors?: { league: string; error: string }[]; leagues?: number; error?: string };
+        if (isNativeApp()) {
+          // The Android / Fire TV app has no ChillyPTV server: it asks ESPN itself.
+          body = await collectFixtures(key.split(','), from, to, async (url) => {
+            const res = await fetch(url, { headers: { Accept: 'application/json' } });
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            return res.json();
+          });
+        } else {
+          const res = await fetch(`${API}/sports/fixtures?${new URLSearchParams({ leagues: key, from: String(from), to: String(to) })}`, { cache: 'no-store' });
+          body = await res.json();
+          if (!res.ok) throw new Error(body.error ?? `HTTP ${res.status}`);
+        }
         if (!alive) return;
-        if (!res.ok) throw new Error(body.error ?? `HTTP ${res.status}`);
         // The feed is only "down" if every competition failed; one off-season league is not an outage.
         const failed = body.errors?.length ?? 0;
         const allFailed = failed > 0 && failed >= (body.leagues ?? leagues.length);
         setState({
           fixtures: allFailed ? null : (body.fixtures ?? []),
-          error: allFailed ? `ESPN could not be reached from your ChillyPTV server (${body.errors![0].error})` : null,
+          error: allFailed ? `ESPN could not be reached${isNativeApp() ? '' : ' from your ChillyPTV server'} (${body.errors![0].error})` : null,
           loading: false,
         });
         timer = window.setTimeout(load, body.fixtures?.some((f) => f.state === 'in') ? 60_000 : 5 * 60_000);
@@ -147,7 +159,7 @@ export function useSportsToday(active = true): SportsToday {
   const catalog = active ? catalogState.catalog : null;
   const index = active ? catalogState.index : null;
   const epgVersion = useEpg((s) => s.version);
-  const online = active && settings.sportsOnline && !!backendHealth()?.ok;
+  const online = active && settings.sportsOnline && (!!backendHealth()?.ok || isNativeApp());
   const feed = useFixtureFeed(settings.sportsLeagues, online);
   const [now, setNow] = useState(Date.now());
   useEffect(() => {

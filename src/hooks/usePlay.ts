@@ -9,6 +9,7 @@ import { XtreamClient } from '../lib/xtream';
 import { buildM3uCatchupUrl } from '../lib/catchup';
 import type { Channel, Episode, Movie, Profile, Programme, SeriesItem } from '../lib/types';
 import type { SportsMatch } from '../store/sports';
+import { isNativeApp, playNative } from '../native/player';
 
 /** Session for one feed of a match; the other ranked feeds become automatic backups. */
 export function matchSession(profile: Profile, m: SportsMatch, channel?: Channel, tried: string[] = []): PlaySession | null {
@@ -60,10 +61,15 @@ export function usePlay() {
   const start = useCallback(
     (session: PlaySession | null) => {
       if (!session) return;
+      // The Fire TV / Android app plays in the native full-screen player (ExoPlayer).
+      if (isNativeApp() && profile) {
+        void playNative(session, profile).catch(() => undefined);
+        return;
+      }
       setSession({ ...session, returnTo: session.returnTo ?? location.pathname + location.search });
       navigate('/play');
     },
-    [navigate, location, setSession],
+    [navigate, location, setSession, profile],
   );
 
   const resumePosition = (key: string): number | undefined => {

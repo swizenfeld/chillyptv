@@ -28,6 +28,8 @@
   --radius-sm: 8px;
   --rail-w: 220px;
   --shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+  --tile-lift-shadow: 0 18px 34px -10px rgba(0, 0, 0, 0.75), 0 6px 14px -6px rgba(0, 0, 0, 0.5);
+  --tile-edge: rgba(255, 255, 255, 0.22);
   --font: 'Geist Variable', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
   color-scheme: dark;
 }
@@ -52,6 +54,8 @@
   --primary-fg: #ffffff;
   --focus: #111113;
   --shadow: 0 12px 32px rgba(0, 0, 0, 0.1);
+  --tile-lift-shadow: 0 16px 30px -10px rgba(0, 0, 0, 0.32), 0 4px 10px -4px rgba(0, 0, 0, 0.16);
+  --tile-edge: rgba(0, 0, 0, 0.08);
   --accent-ink: color-mix(in srgb, var(--accent) 80%, #000);
   color-scheme: light;
 }
@@ -985,11 +989,6 @@ img.rounded,
   object-fit: cover;
   display: block;
 }
-.poster-btn:hover .poster-img,
-.poster-btn:focus-visible .poster-img,
-.wide-card:hover .wide-img {
-  outline: 2px solid var(--focus);
-}
 .poster-play {
   position: absolute;
   inset: 0;
@@ -1191,7 +1190,8 @@ img.rounded,
   outline: none;
 }
 .v-grid {
-  padding: 0 14px 14px;
+  /* room above the first row for a lifted tile */
+  padding: 16px 14px 14px;
 }
 .v-grid-row {
   position: absolute;
@@ -3031,10 +3031,6 @@ div.live-card-logo {
   top: 8px;
   left: 8px;
 }
-.live-card:hover .live-card-art,
-.live-card:focus-visible .live-card-art {
-  outline: 2px solid var(--focus);
-}
 .live-card:hover .poster-play,
 .live-card:focus-visible .poster-play {
   opacity: 1;
@@ -3659,4 +3655,586 @@ textarea.input {
   border: 1px solid color-mix(in oklab, var(--warn) 45%, transparent);
   background: color-mix(in oklab, var(--warn) 10%, transparent);
   font-size: 13px;
+}
+
+.other-versions {
+  margin-top: 18px;
+}
+.other-versions h3 {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 8px;
+  font-size: 12px;
+  font-weight: 650;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+.version-chip {
+  all: unset;
+  box-sizing: border-box;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: baseline;
+  gap: 8px;
+  min-height: 36px;
+  padding: 8px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  font-size: 13px;
+  max-width: 100%;
+}
+.version-chip:hover {
+  border-color: color-mix(in srgb, var(--text) 30%, transparent);
+}
+.version-chip:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.version-chip .muted {
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.track-line {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 18px;
+  margin: 2px 0 14px;
+  font-size: 13px;
+  color: var(--muted);
+}
+.track-line b {
+  color: var(--text);
+  font-weight: 600;
+  margin-right: 4px;
+}
+
+.guide-outage {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid color-mix(in srgb, var(--warn) 40%, transparent);
+  background: color-mix(in srgb, var(--warn) 10%, transparent);
+  font-size: 13px;
+  line-height: 1.45;
+}
+.guide-outage svg {
+  flex: none;
+  margin-top: 2px;
+  color: var(--warn);
+}
+
+.versions-chip {
+  margin-left: 6px;
+  font-size: 10px;
+  vertical-align: 1px;
+}
+.version-pick {
+  max-width: 320px;
+  margin: 2px 0 10px;
+}
+
+.event-title {
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.35;
+  margin: 2px 0 10px;
+}
+.sports-chips .count {
+  opacity: 0.6;
+  margin-left: 2px;
+  font-size: 11px;
+}
+
+/* Remote-control navigation: a focus ring you can see from the sofa. */
+.tv-mode :focus-visible,
+.tv-mode [role='listbox']:focus {
+  outline: 3px solid var(--accent) !important;
+  outline-offset: 3px;
+  border-radius: 10px;
+}
+.tv-mode .poster-card:focus-within .poster-play,
+.tv-mode .poster-btn:focus-visible .poster-play {
+  opacity: 1;
+}
+.tv-mode .channel-row:focus-visible {
+  outline-offset: -3px;
+}
+
+/* "See all" as a row's last tile: shown with remote navigation, where the link beside the
+   title is an awkward extra stop. */
+.see-all-tile {
+  display: none;
+}
+.tv-mode .see-all-tile {
+  flex: none;
+  width: 116px;
+  align-self: stretch;
+  margin-bottom: 34px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 600;
+  text-decoration: none;
+}
+.tv-mode .see-all-tile:focus-visible {
+  color: var(--text);
+  background: var(--panel-2);
+}
+.tv-mode .row-head .row-link {
+  display: none;
+}
+
+/* TV: smaller home rows so more fits on screen, with room for the focus ring and lift. */
+.tv-mode .h-scroll {
+  gap: 12px;
+  padding: 8px 6px 10px;
+  margin: -8px -6px 0;
+  scroll-padding: 0 24px;
+}
+.tv-mode .h-scroll .poster-card {
+  width: 116px;
+}
+.tv-mode .h-scroll .poster-title {
+  font-size: 12px;
+}
+.tv-mode .h-scroll .poster-sub {
+  font-size: 11px;
+}
+.tv-mode .live-card {
+  width: 210px;
+}
+.tv-mode .wide-card {
+  width: 210px;
+}
+.tv-mode .row-section {
+  margin-bottom: 18px;
+}
+.tv-mode .row-head {
+  margin-bottom: 6px;
+}
+.tv-mode .row-head h2 {
+  font-size: 17px;
+}
+
+/* TV: a shorter billboard so the first rows show on a 1080p screen. */
+.tv-mode .hero {
+  height: clamp(260px, 50vh, 460px);
+}
+
+/* ---------- home billboard carousel (live matches) ---------- */
+.hero-carousel {
+  position: relative;
+  margin-bottom: 20px;
+}
+.hero-carousel .hero {
+  margin-bottom: 0;
+}
+.hero-carousel.multi .hero-body {
+  padding-bottom: calc(clamp(22px, 4vw, 44px) + 26px);
+}
+.hero-carousel.multi .hero-media {
+  animation: hero-fade 0.6s ease both;
+}
+@keyframes hero-fade {
+  from {
+    opacity: 0;
+  }
+}
+.hero-eyebrow {
+  margin: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 12px;
+  font-size: 14px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.86);
+}
+.hero-eyebrow > span:not(.live-pill) {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.hero-yourteam {
+  color: #fbbf24;
+}
+.hero-board {
+  display: grid;
+  width: max-content;
+  max-width: 100%;
+  gap: 2px;
+  font-size: clamp(26px, 3.4vw, 42px);
+}
+.hb-team {
+  display: flex;
+  align-items: baseline;
+  gap: 16px;
+}
+.hb-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.hb-score {
+  margin-left: auto;
+  padding-left: 28px;
+  min-width: 1.4ch;
+  text-align: right;
+  font-weight: 800;
+}
+.match-art {
+  background:
+    radial-gradient(circle at 74% 44%, hsl(var(--hue) 34% 26%), transparent 60%),
+    linear-gradient(120deg, hsl(var(--hue) 18% 8%), hsl(calc(var(--hue) + 40) 26% 14%));
+}
+.match-crests {
+  display: flex;
+  align-items: center;
+  gap: clamp(18px, 4vw, 56px);
+}
+.match-crest {
+  width: clamp(90px, 13vw, 190px);
+  aspect-ratio: 1;
+  height: auto;
+  object-fit: contain;
+  filter: drop-shadow(0 12px 28px rgba(0, 0, 0, 0.45));
+}
+.match-crests div.match-crest {
+  border-radius: 50%;
+  font-size: clamp(26px, 3vw, 46px);
+  font-weight: 800;
+}
+.hero-dots {
+  position: absolute;
+  left: clamp(22px, 4vw, 44px);
+  bottom: clamp(18px, 3vw, 30px);
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.hero-dot {
+  position: relative;
+  width: 10px;
+  height: 10px;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.36);
+  overflow: hidden;
+  cursor: pointer;
+  transition:
+    width 0.3s cubic-bezier(0.16, 1, 0.3, 1),
+    background 0.2s;
+}
+.hero-dot:hover {
+  background: rgba(255, 255, 255, 0.6);
+}
+.hero-dot.active {
+  width: 34px;
+  background: rgba(255, 255, 255, 0.36);
+}
+.hero-dot.active:not(:has(.hero-dot-fill)) {
+  background: #fff;
+}
+.hero-dot-fill {
+  position: absolute;
+  inset: 0;
+  background: #fff;
+  transform-origin: left;
+  animation: hero-dot-fill linear both;
+}
+@keyframes hero-dot-fill {
+  from {
+    transform: scaleX(0);
+  }
+}
+.hero-dot:focus-visible,
+.tv-mode .hero-dot:focus {
+  outline: 2px solid #fff;
+  outline-offset: 3px;
+}
+.hero-arrow {
+  position: absolute;
+  top: 50%;
+  z-index: 2;
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  margin-top: -22px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 50%;
+  background: rgba(10, 10, 11, 0.5);
+  color: #fff;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.2s;
+}
+.hero-arrow.prev {
+  left: 12px;
+}
+.hero-arrow.next {
+  right: 12px;
+}
+.hero-carousel:hover .hero-arrow {
+  opacity: 1;
+}
+.hero-arrow:hover {
+  background: rgba(10, 10, 11, 0.72);
+}
+.tv-mode .hero-arrow {
+  display: none;
+}
+@media (hover: none) {
+  .hero-arrow {
+    display: none;
+  }
+}
+@media (max-width: 900px) {
+  .match-art {
+    place-items: center;
+  }
+  .match-crest {
+    width: 84px;
+  }
+  .hero-carousel.multi .hero-body {
+    padding-bottom: 46px;
+  }
+  .hero-dots {
+    left: 18px;
+    bottom: 20px;
+  }
+  .hero-board {
+    font-size: 24px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .hero-carousel.multi .hero-media {
+    animation: none;
+  }
+}
+
+/* ---------- tiles: hover / focus lift ----------
+   Posters, live and wide cards rise towards you: the artwork grows a little, casts a soft shadow,
+   brightens slightly and catches a faint light edge. The title underneath stays put. The same
+   lift marks the remote's focus on TV, in place of the focus ring. */
+.poster-img,
+.wide-img,
+.live-card-art {
+  transition:
+    transform 0.32s cubic-bezier(0.2, 0.8, 0.2, 1),
+    box-shadow 0.32s cubic-bezier(0.2, 0.8, 0.2, 1);
+  will-change: transform;
+}
+.poster-img::after,
+.wide-img::after,
+.live-card-art::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  border-radius: inherit;
+  pointer-events: none;
+  box-shadow: inset 0 0 0 1px var(--tile-edge);
+  background: linear-gradient(160deg, rgba(255, 255, 255, 0.14), transparent 42%);
+  opacity: 0;
+  transition: opacity 0.32s;
+}
+.poster-img img,
+.wide-img img,
+.live-card-art > img {
+  transition: filter 0.32s;
+}
+.poster-card:hover,
+.poster-card:focus-within,
+.wide-card:hover,
+.wide-card:focus-visible,
+.live-card:hover,
+.live-card:focus-visible {
+  position: relative;
+  z-index: 2;
+}
+.poster-btn:hover .poster-img,
+.poster-btn:focus-visible .poster-img,
+.wide-card:hover .wide-img,
+.wide-card:focus-visible .wide-img,
+.live-card:hover .live-card-art,
+.live-card:focus-visible .live-card-art {
+  transform: translateY(-3px) scale(1.06);
+  box-shadow: var(--tile-lift-shadow);
+}
+.poster-btn:hover .poster-img::after,
+.poster-btn:focus-visible .poster-img::after,
+.wide-card:hover .wide-img::after,
+.wide-card:focus-visible .wide-img::after,
+.live-card:hover .live-card-art::after,
+.live-card:focus-visible .live-card-art::after {
+  opacity: 1;
+}
+.poster-btn:hover .poster-img img,
+.poster-btn:focus-visible .poster-img img,
+.wide-card:hover .wide-img img,
+.wide-card:focus-visible .wide-img img,
+.live-card:hover .live-card-art > img,
+.live-card:focus-visible .live-card-art > img {
+  filter: brightness(1.08);
+}
+/* the play badge is a small glass disc, not a dark wash over the artwork */
+.poster-play {
+  z-index: 2;
+  background: none;
+}
+.poster-play svg {
+  box-sizing: content-box;
+  width: 22px;
+  height: 22px;
+  padding: 13px 12px 13px 14px;
+  border-radius: 50%;
+  background: rgba(10, 10, 11, 0.55);
+  -webkit-backdrop-filter: blur(8px);
+  backdrop-filter: blur(8px);
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.22);
+  transform: scale(0.8);
+  transition: transform 0.32s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+/* the text sits above the lifted artwork's shadow */
+.poster-title,
+.poster-sub,
+.wide-title {
+  position: relative;
+  z-index: 1;
+}
+.poster-btn:hover .poster-play svg,
+.poster-btn:focus-visible .poster-play svg,
+.wide-card:hover .poster-play svg,
+.wide-card:focus-visible .poster-play svg,
+.live-card:hover .poster-play svg,
+.live-card:focus-visible .poster-play svg {
+  transform: none;
+}
+.wide-card:focus-visible .poster-play {
+  opacity: 1;
+}
+/* The text under a lifted tile brightens with it. */
+.poster-btn:focus-visible .poster-title,
+.wide-card:focus-visible .wide-title,
+.live-card:focus-visible .wide-title {
+  color: var(--text);
+}
+.poster-btn:focus-visible,
+.wide-card:focus-visible,
+.live-card:focus-visible {
+  outline: none;
+}
+/* Rows leave room for the lift and its shadow (the scroller would clip them). */
+.h-scroll {
+  padding: 10px 10px 12px;
+  margin: -10px -10px -4px;
+  scroll-padding: 0 10px;
+}
+
+/* TV: the lift is the focus mark, bolder to read from the sofa: a bigger lift, a soft light edge
+   and glow instead of a ring, and the rest of the row steps back a little. */
+.tv-mode .poster-btn:focus-visible,
+.tv-mode .wide-card:focus-visible,
+.tv-mode .live-card:focus-visible,
+.tv-mode .see-all-tile:focus-visible {
+  outline: none !important;
+}
+.tv-mode .poster-btn:focus-visible .poster-img,
+.tv-mode .wide-card:focus-visible .wide-img,
+.tv-mode .live-card:focus-visible .live-card-art {
+  transform: translateY(-4px) scale(1.1);
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.4),
+    0 0 26px rgba(255, 255, 255, 0.16),
+    0 24px 40px -12px rgba(0, 0, 0, 0.9);
+}
+.tv-mode .poster-btn:focus-visible .poster-img::after,
+.tv-mode .wide-card:focus-visible .wide-img::after,
+.tv-mode .live-card:focus-visible .live-card-art::after {
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.35);
+}
+.tv-mode .h-scroll .poster-img,
+.tv-mode .h-scroll .wide-img,
+.tv-mode .h-scroll .live-card-art {
+  transition:
+    transform 0.32s cubic-bezier(0.2, 0.8, 0.2, 1),
+    box-shadow 0.32s cubic-bezier(0.2, 0.8, 0.2, 1),
+    filter 0.32s;
+}
+.tv-mode .h-scroll:focus-within .poster-img,
+.tv-mode .h-scroll:focus-within .wide-img,
+.tv-mode .h-scroll:focus-within .live-card-art {
+  filter: brightness(0.66) saturate(0.85);
+}
+.tv-mode .h-scroll:focus-within .poster-btn:focus-visible .poster-img,
+.tv-mode .h-scroll:focus-within .wide-card:focus-visible .wide-img,
+.tv-mode .h-scroll:focus-within .live-card:focus-visible .live-card-art {
+  filter: none;
+}
+.tv-mode .h-scroll {
+  padding: 14px 14px 14px;
+  margin: -14px -14px -4px;
+  scroll-padding: 0 28px;
+}
+.tv-mode .see-all-tile {
+  transition:
+    transform 0.32s cubic-bezier(0.2, 0.8, 0.2, 1),
+    box-shadow 0.32s,
+    background 0.2s,
+    color 0.2s;
+}
+.tv-mode .see-all-tile:focus-visible {
+  transform: scale(1.08);
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.4),
+    0 0 26px rgba(255, 255, 255, 0.16),
+    var(--tile-lift-shadow);
+}
+@media (prefers-reduced-motion: reduce) {
+  .poster-img,
+  .wide-img,
+  .live-card-art,
+  .poster-play svg {
+    transition: box-shadow 0.2s;
+  }
+  .poster-btn:hover .poster-img,
+  .poster-btn:focus-visible .poster-img,
+  .wide-card:hover .wide-img,
+  .wide-card:focus-visible .wide-img,
+  .live-card:hover .live-card-art,
+  .live-card:focus-visible .live-card-art,
+  .tv-mode .see-all-tile:focus-visible {
+    transform: none !important;
+  }
+}
+
+/* Suggested country guide: text on the left, the button stays beside it. */
+.setting.guide-suggestion {
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 16px;
+}
+.setting.guide-suggestion .btn {
+  flex: none;
+  white-space: nowrap;
 }

@@ -9,10 +9,12 @@
  * playlist, the TV guide, channel naming, today's football and timings. The report never
  * contains the username, password, server address or any stream URL.
  *
- * Options: --epg URL (extra XMLTV source)  --ua "User-Agent"  --languages es,en  --no-stream (skip the
+ * Options: --movies N / --episodes N (files checked for audio and subtitle tracks; --no-media skips)
+ *          --epg URL (extra XMLTV source)  --ua "User-Agent"  --languages es,en  --no-stream (skip the
  * one-channel stream check)  --out FILE  --leagues eng.1,esp.1,...
  */
 import { writeFileSync } from 'node:fs';
+import { spawn, spawnSync } from 'node:child_process';
 import { createInterface } from 'node:readline/promises';
 import { stdin, stdout } from 'node:process';
 import { XmltvParser, type EpgData } from '../shared/xmltv';
@@ -23,6 +25,9 @@ import {
   scorePrepared, type Fixture,
 } from '../shared/sports';
 import { normalize } from '../src/lib/search';
+import { trimGuide } from '../shared/guide';
+import { eventListing } from '../shared/events';
+import { ffmpegInfoArgs, ffprobeArgs, languageName, parseFfmpegInfo, parseProbe, type MediaProbe } from '../shared/media';
 
 // ------------------------------------------------------------------ options
 const argv = process.argv.slice(2);
@@ -142,13 +147,19 @@ async function main() {
   let channels: Ch[] = [];
   let vodCount = 0;
   let seriesCount = 0;
+  let vodItems: Record<string, unknown>[] = [];
+  let seriesItems: Record<string, unknown>[] = [];
+  let vodCatName = new Map<string, string>();
+  let api: ((q?: Record<string, string>) => string) | null = null;
+  let busy = false;
   let epgUrls: string[] = [];
   let timezone: string | undefined;
 
   if (!m3u) {
-    const api = (q: Record<string, string> = {}) => `${base}/player_api.php?${new URLSearchParams({ username: user!, password: pass!, ...q })}`;
+    const xapi = (q: Record<string, string> = {}) => `${base}/player_api.php?${new URLSearchParams({ username: user!, password: pass!, ...q })}`;
+    api = xapi;
     out('## Account');
-    const acct = await timed('Login (player_api)', () => getText(api(), 20_000)).catch((e) => {
+    const acct = await timed('Login (player_api)', () => getText(xapi(), 20_000)).catch((e) => {
       throw new Error(`Login request failed: ${why(e)}`);
     });
     let info: { user_info?: Record<string, unknown>; server_info?: Record<string, unknown> };
@@ -170,9 +181,14 @@ async function main() {
       ['Server timezone', timezone ?? '?'],
       ['Login time', `${acct.ms} ms`],
     ]);
+    busy = Number(ui.active_cons) > 0 && Number(ui.active_cons) >= Number(ui.max_connections);
+    if (busy) {
+      out(`> **Something was playing on this account during the check** (${ui.active_cons} of ${ui.max_connections} connections in use). Downloads and the movie checks below wait for or are refused by the provider, so their times are not representative. Stop playback on every device and run it again.`);
+      out();
+    }
 
     const get = async (action: string) => {
-      const r = await timed(action, () => getText(api({ action }), 120_000));
+      const r = await timed(action, () => getText(xapi({ action }), 120_000));
       try {
         return { list: JSON.parse(r.text) as Record<string, unknown>[], bytes: r.bytes, ms: r.ms };
       } catch {
@@ -188,6 +204,8 @@ async function main() {
     });
     vodCount = Array.isArray(vod.list) ? vod.list.length : 0;
     seriesCount = Array.isArray(series.list) ? series.list.length : 0;
+    vodItems = Array.isArray(vod.list) ? vod.list : [];
+    seriesItems = Array.isArray(series.list) ? series.list : [];
     epgUrls = [`${base}/xmltv.php?${new URLSearchParams({ username: user!, password: pass! })}`];
     out('## Playlist');
     table(['', 'Count', 'Download', 'Time'], [
@@ -234,6 +252,17 @@ async function main() {
   const byBase = new Map<string, Ch[]>();
   for (const c of channels) if (c.tags.base) (byBase.get(c.tags.base) ?? byBase.set(c.tags.base, []).get(c.tags.base)!).push(c);
   const dupGroups = [...byBase.values()].filter((g) => g.length > 1);
+  {
+    // What Live TV shows with the default tidy view: empty/finished event slots hidden, regional copies grouped.
+    const CITY = /\(([^)]+)\)\s*(?:\b(?:fhd|hd|sd|4k|uhd)\b\s*)?$/i;
+    const slots = channels.filter((c) => c.tags.event === 'idle' || c.tags.event === 'ended');
+    const groups = new Map<string, Ch[]>();
+    for (const c of channels) if (!(c.tags.event === 'idle' || c.tags.event === 'ended') && c.tags.base) (groups.get(`${c.category}|${c.tags.base}`) ?? groups.set(`${c.category}|${c.tags.base}`, []).get(`${c.category}|${c.tags.base}`)!).push(c);
+    const regional = [...groups.values()].filter((g) => g.length >= 3 && g.filter((c) => CITY.test(c.name)).length >= 2);
+    const folded = regional.reduce((a, g) => a + g.length - 1, 0);
+    out(`**Tidy Live TV:** ${slots.length.toLocaleString()} empty or finished event slots hidden, ${regional.length.toLocaleString()} channels with regional versions shown once (${folded.toLocaleString()} copies folded) → ${(n - slots.length - folded).toLocaleString()} of ${n.toLocaleString()} channels listed.`);
+    out();
+  }
   out(`**Duplicate feeds:** ${dupGroups.length.toLocaleString()} channel names appear more than once (${dupGroups.reduce((a, g) => a + g.length, 0).toLocaleString()} channels). Merging them would leave ${byBase.size.toLocaleString()} distinct channels.`);
   out();
   out('Largest duplicate groups:');
@@ -278,6 +307,22 @@ async function main() {
     }
   }
   out();
+  // With no guide file, the app asks the provider per channel (get_short_epg). Does that still work?
+  if (!Object.keys(epg.programmes).length && api) {
+    const sample = channels.filter((c) => c.epgId && !c.tags.event).filter((_, i, a) => i % Math.max(1, Math.floor(a.length / 5)) === 0).slice(0, 5);
+    let withListings = 0;
+    for (const c of sample) {
+      try {
+        const r = await getText(api({ action: 'get_short_epg', stream_id: c.id, limit: '4' }), 15_000);
+        const list = (JSON.parse(r.text) as { epg_listings?: unknown[] }).epg_listings ?? [];
+        if (list.length) withListings++;
+      } catch {
+        /* counts as none */
+      }
+    }
+    out(`**Per-channel listings while the guide file is down:** ${withListings} of ${sample.length} sampled channels answered with listings${withListings ? ' (the app falls back to these for the channel you watch)' : ' (the provider\'s guide seems to be down altogether)'}.`);
+    out();
+  }
   // Same resolution as the app: guide id, exact name, then cleaned base name.
   const size = (id: string) => epg.programmes[id]?.length ?? 0;
   const rById = new Map<string, string>();
@@ -311,6 +356,35 @@ async function main() {
   table(['Matched by', 'Channels'], [...how.entries()]);
   const uncovered = channels.filter((c) => !keyOf.has(c.id));
   table(['Category without guide', 'Channels'], top(uncovered, (c) => c.category, 15));
+  // What the app now downloads: listings only for guide channels the playlist links to.
+  {
+    const t0 = performance.now();
+    const trimmed = trimGuide(epg, channels.map((c) => [c.epgId ?? '', c.name]));
+    const ms = Math.round(performance.now() - t0);
+    const full = Buffer.byteLength(JSON.stringify(epg));
+    const slim = Buffer.byteLength(JSON.stringify(trimmed));
+    out(`**Trimmed guide (what the app loads):** ${mb(slim)} instead of ${mb(full)} (${pct(slim, full)}), listings for ${Object.keys(trimmed.programmes).length.toLocaleString()} of ${Object.keys(epg.programmes).length.toLocaleString()} guide channels; trimming took ${ms} ms.`);
+    out();
+  }
+  // Event channels without a guide get a listing from their own name.
+  {
+    const fromName = uncovered.map((c) => ({ c, e: eventListing(c.name) })).filter((x) => x.e);
+    out(`**Listings from event channel names:** ${fromName.length.toLocaleString()} channels without a guide get one (coverage ${pct(keyOf.size, n)} → ${pct(keyOf.size + fromName.length, n)}).`);
+    out();
+    const fmt = (t: number) => new Date(t).toISOString().slice(5, 16).replace('T', ' ');
+    for (const { c, e } of fromName.filter((_, i) => i % Math.max(1, Math.floor(fromName.length / 15)) === 0).slice(0, 15)) out(`- ${fmt(e!.start)} UTC · ${e!.title} ← \`${c.name}\``);
+    // Finished slots without a time ("End | … | 00:00 (GMT)") need no listing; anything else here is a miss.
+    const timeLike = /\b\d{1,2}:\d{2}\b|\d{4}-\d{2}-\d{2}|^\W*(next|live|upcoming|soon)\W/i;
+    const skipped = uncovered.filter((c) => !c.tags.event && /\|/.test(c.name) && /\s(vs?\.?|x|-)\s/i.test(c.name) && timeLike.test(c.name) && !eventListing(c.name));
+    const endedNoTime = uncovered.filter((c) => c.tags.event === 'ended' && !eventListing(c.name)).length;
+    if (endedNoTime) out(`(${endedNoTime.toLocaleString()} finished event slots carry no time and get no listing; that's expected.)`);
+    if (skipped.length) {
+      out();
+      out(`Event-looking names that produced no listing (${skipped.length}), samples:`);
+      for (const c of skipped.filter((_, i) => i % Math.max(1, Math.floor(skipped.length / 15)) === 0).slice(0, 15)) out(`- \`${c.name}\``);
+    }
+    out();
+  }
 
   // ---------------------------------------------------------------- football today
   out("## Today's football");
@@ -412,6 +486,152 @@ async function main() {
   out(`Sample football-looking guide titles (${sportsTitles.length} today):`);
   for (const t of [...new Set(sportsTitles)].slice(0, 15)) out(`- \`${t}\``);
   out();
+
+  // ---------------------------------------------------------------- movies & episodes: tracks
+  if (!flag('no-media') && !m3u && api && (vodItems.length || seriesItems.length)) {
+    out('## Movies and episodes: languages and subtitles');
+    const ffprobe = process.env.CHILLY_FFPROBE ?? 'ffprobe';
+    const hasFfprobe = spawnSync(ffprobe, ['-version'], { stdio: 'ignore' }).status === 0;
+    // ffmpeg-only installs (no ffprobe): ffmpeg's own stream listing carries the same track details.
+    const ffmpegBin = process.env.CHILLY_FFMPEG ?? 'ffmpeg';
+    const hasFfmpeg = !hasFfprobe && spawnSync(ffmpegBin, ['-version'], { stdio: 'ignore' }).status === 0;
+    const hasProbe = hasFfprobe || hasFfmpeg;
+    const wantMovies = Number(opt('movies') ?? 24);
+    const wantEpisodes = Number(opt('episodes') ?? 8);
+    // Spread the sample across categories (newest first in each), like browsing would.
+    const spread = <T,>(items: T[], cat: (x: T) => string, added: (x: T) => number, n: number): T[] => {
+      const by = new Map<string, T[]>();
+      for (const x of [...items].sort((a, b) => added(b) - added(a))) (by.get(cat(x)) ?? by.set(cat(x), []).get(cat(x))!).push(x);
+      const lists = [...by.values()];
+      const outList: T[] = [];
+      for (let round = 0; outList.length < n && lists.some((l) => l.length > round); round++) for (const l of lists) if (l[round] && outList.length < n) outList.push(l[round]);
+      return outList;
+    };
+    const catsRes = await getText(api({ action: 'get_vod_categories' }), 30_000).catch(() => null);
+    try {
+      vodCatName = new Map((JSON.parse(catsRes?.text ?? '[]') as Record<string, unknown>[]).map((c) => [String(c.category_id), String(c.category_name ?? '')]));
+    } catch {
+      /* ignore */
+    }
+    type Item = { kind: 'movie' | 'episode'; title: string; category: string; url: string; info?: Record<string, unknown> };
+    const items: Item[] = spread(vodItems, (m) => String(m.category_id), (m) => Number(m.added) || 0, wantMovies).map((m) => ({
+      kind: 'movie',
+      title: String(m.name ?? ''),
+      category: vodCatName.get(String(m.category_id)) ?? '',
+      url: `${base}/movie/${encodeURIComponent(user!)}/${encodeURIComponent(pass!)}/${m.stream_id}.${m.container_extension || 'mp4'}`,
+      info: m,
+    }));
+    for (const s of spread(seriesItems, (x) => String(x.category_id), (x) => Number(x.last_modified) || 0, wantEpisodes)) {
+      try {
+        const r = await getText(api({ action: 'get_series_info', series_id: String(s.series_id) }), 30_000);
+        const eps = (JSON.parse(r.text) as { episodes?: Record<string, Record<string, unknown>[]> }).episodes ?? {};
+        const first = Object.values(eps).flat()[0];
+        if (first) items.push({ kind: 'episode', title: `${s.name} · ${first.title ?? ''}`, category: '', url: `${base}/series/${encodeURIComponent(user!)}/${encodeURIComponent(pass!)}/${first.id}.${first.container_extension || 'mp4'}` });
+      } catch {
+        /* skip */
+      }
+    }
+    const probeOne = (url: string) =>
+      new Promise<MediaProbe | string>((resolve) => {
+        const protocols = 'http,https,tcp,tls,crypto,httpproxy';
+        const child = hasFfprobe
+          ? spawn(ffprobe, ffprobeArgs(url, UA, protocols), { stdio: ['ignore', 'pipe', 'pipe'] })
+          : spawn(ffmpegBin, ffmpegInfoArgs(url, UA, protocols), { stdio: ['ignore', 'pipe', 'pipe'] });
+        let o = '';
+        let err = '';
+        child.stdout.on('data', (d: Buffer) => (o += d));
+        child.stderr.on('data', (d: Buffer) => (err += d));
+        const timer = setTimeout(() => child.kill('SIGKILL'), 30_000);
+        child.on('error', (e) => resolve(e.message));
+        child.on('close', () => {
+          clearTimeout(timer);
+          try {
+            const parsed = hasFfprobe ? parseProbe(JSON.parse(o)) : parseFfmpegInfo(err);
+            if (!parsed) throw new Error('no stream info');
+            resolve(parsed);
+          } catch {
+            resolve(err.trim().split('\n').pop() || 'no answer within 30 s');
+          }
+        });
+      });
+    // What titles and categories say about languages, across the whole catalogue (cheap, name-based).
+    {
+      const all = vodItems.map((m) => `${m.name ?? ''} ${vodCatName.get(String(m.category_id)) ?? ''}`);
+      const n = (re: RegExp) => all.filter((t) => re.test(t)).length;
+      table(['Movie titles / categories that say…', 'Movies', 'Share'], [
+        ['MULTI SUB / multiple subtitles', n(/multi[\s-]*subs?/i), pct(n(/multi[\s-]*subs?/i), all.length)],
+        ['ENG SUB / English subtitles', n(/\beng?[\s-]*subs?\b|english sub/i), pct(n(/\beng?[\s-]*subs?\b|english sub/i), all.length)],
+        ['MULTI AUDIO / DUAL audio', n(/multi[\s-]*audio|\bdual\b/i), pct(n(/multi[\s-]*audio|\bdual\b/i), all.length)],
+        ['Latino / Castellano / Spanish', n(/latino|castellano|espa[nñ]ol|spanish|\|lat\||\bes\b/i), pct(n(/latino|castellano|espa[nñ]ol|spanish|\|lat\||\bes\b/i), all.length)],
+      ]);
+      const subbed = vodItems.filter((m) => /multi[\s-]*subs?|\beng?[\s-]*subs?\b/i.test(`${m.name ?? ''} ${vodCatName.get(String(m.category_id)) ?? ''}`));
+      // Make sure some of those are in the sample: they're the files most likely to carry subtitle tracks.
+      for (const m of spread(subbed, (x) => String(x.category_id), (x) => Number(x.added) || 0, 6)) {
+        if (items.some((i) => i.info?.stream_id === m.stream_id)) continue;
+        items.push({ kind: 'movie', title: String(m.name ?? ''), category: vodCatName.get(String(m.category_id)) ?? '', url: `${base}/movie/${encodeURIComponent(user!)}/${encodeURIComponent(pass!)}/${m.stream_id}.${m.container_extension || 'mp4'}`, info: m });
+      }
+    }
+    const results: { it: Item; p: MediaProbe | string }[] = [];
+    if (hasProbe) {
+      out(`Checked ${items.length} files with ${hasFfprobe ? 'ffprobe' : 'ffmpeg (ffprobe is not installed; ffmpeg lists the same tracks)'}, one at a time (your plan allows one connection, so nothing else should be playing). Each check reads only the start of the file.`);
+      const t0 = performance.now();
+      await timed(`Track check (${items.length} files)`, async () => {
+        for (const it of items) results.push({ it, p: await probeOne(it.url) });
+      });
+      if (busy) out('(Another stream was using the account during this check, so the times below are inflated.)');
+      out(`Average time to read one file's tracks: ${((performance.now() - t0) / Math.max(1, items.length) / 1000).toFixed(1)} s (this is the wait before a movie starts when its page didn't read them first).`);
+    } else {
+      out('ffprobe is not installed, so only what the provider reports about each movie (usually just the first audio track) is shown. Install ffmpeg (macOS: `brew install ffmpeg`) and run again for the full picture.');
+      for (const it of items.filter((x) => x.kind === 'movie')) {
+        try {
+          const r = await getText(api({ action: 'get_vod_info', vod_id: String(it.info?.stream_id) }), 30_000);
+          const info = (JSON.parse(r.text) as { info?: { audio?: { codec_name?: string; channels?: number; tags?: { language?: string } }; video?: { codec_name?: string; width?: number; height?: number } } }).info ?? {};
+          results.push({ it, p: { duration: null, container: String(it.info?.container_extension ?? '') || undefined, ...(info.video ? { video: { codec: info.video.codec_name ?? '?', width: info.video.width, height: info.video.height } } : {}), audio: info.audio ? [{ index: 0, codec: info.audio.codec_name ?? '?', channels: info.audio.channels, lang: info.audio.tags?.language }] : [], subtitles: [] } });
+        } catch (e) {
+          results.push({ it, p: why(e) });
+        }
+      }
+    }
+    out();
+    const ok = results.filter((r): r is { it: Item; p: MediaProbe } => typeof r.p !== 'string');
+    const failed = results.filter((r) => typeof r.p === 'string');
+    const count = (f: (p: MediaProbe) => boolean) => ok.filter((r) => f(r.p)).length;
+    const langs = (pick: (p: MediaProbe) => (string | undefined)[]) => {
+      const m = new Map<string, number>();
+      for (const r of ok) for (const l of new Set(pick(r.p))) m.set(languageName(l) ?? 'untagged', (m.get(languageName(l) ?? 'untagged') ?? 0) + 1);
+      return [...m.entries()].sort((a, b) => b[1] - a[1]).map(([l, n]) => `${l} ${n}`).join(', ') || '–';
+    };
+    const browserAudio = new Set(['aac', 'mp3', 'opus', 'vorbis', 'flac']);
+    const box = (c?: string) => (!c ? '?' : /mp4|mov/.test(c) ? 'mp4' : /matroska|webm/.test(c) ? 'mkv' : c.split(',')[0]);
+    table(['', 'Files', 'Share'], [
+      ['Checked', `${ok.length} of ${results.length}`, pct(ok.length, results.length)],
+      ['More than one audio track', count((p) => p.audio.length > 1), pct(count((p) => p.audio.length > 1), ok.length)],
+      ['Built-in subtitles (any)', count((p) => p.subtitles.length > 0), pct(count((p) => p.subtitles.length > 0), ok.length)],
+      ['…text subtitles the app can show', count((p) => p.subtitles.some((x) => x.text)), pct(count((p) => p.subtitles.some((x) => x.text)), ok.length)],
+      ['…picture subtitles only (PGS/VobSub)', count((p) => p.subtitles.length > 0 && !p.subtitles.some((x) => x.text)), pct(count((p) => p.subtitles.length > 0 && !p.subtitles.some((x) => x.text)), ok.length)],
+      ['Audio browsers can\'t play (AC3/EAC3/DTS…)', count((p) => p.audio.length > 0 && !browserAudio.has(p.audio[0].codec)), pct(count((p) => p.audio.length > 0 && !browserAudio.has(p.audio[0].codec)), ok.length)],
+    ]);
+    out(`Containers: ${top(ok, (r) => box(r.p.container)).map(([k, v]) => `${k} ${v}`).join(', ') || '–'}`);
+    out(`Audio languages: ${langs((p) => p.audio.map((a) => a.lang))}`);
+    out(`Subtitle languages: ${langs((p) => p.subtitles.map((x) => x.lang))}`);
+    out();
+    table(
+      ['Title', 'Category', 'File', 'Audio', 'Subtitles'],
+      results.map(({ it, p }) =>
+        typeof p === 'string'
+          ? [it.title.slice(0, 60), it.category, '–', `failed: ${p.slice(0, 80)}`, '']
+          : [
+              it.title.slice(0, 60),
+              it.category,
+              `${box(p.container)} ${p.video ? `${p.video.codec} ${p.video.height ?? ''}p` : ''}`.trim(),
+              p.audio.map((a) => `${a.lang ?? '?'} ${a.codec}${a.channels ? ` ${a.channels}ch` : ''}`).join(', ') || 'none',
+              p.subtitles.map((x) => `${x.lang ?? '?'} ${x.codec}${x.forced ? ' forced' : ''}`).join(', ') || 'none',
+            ],
+      ),
+    );
+    if (failed.length) out(`${failed.length} file(s) could not be read; see the table.`);
+    out();
+  }
 
   // ---------------------------------------------------------------- one stream
   if (!flag('no-stream') && !m3u && channels.length) {

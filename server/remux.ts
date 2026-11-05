@@ -1,7 +1,8 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { ffmpegInfo, ffmpegPath, isHttpUrl, sendError, sendJson, userAgentFrom } from './util.js';
 import { assertAllowedTarget } from './guard.js';
+import { ffmpegInfoArgs, ffprobeArgs, parseFfmpegInfo, parseProbe, type MediaProbe } from '../shared/media.js';
 
 /** Only allow network protocols as ffmpeg input (no file:, pipe:, concat: …). */
 export const SAFE_PROTOCOLS = 'http,https,tcp,tls,crypto,httpproxy';
@@ -10,9 +11,13 @@ export const SAFE_PROTOCOLS = 'http,https,tcp,tls,crypto,httpproxy';
  * Builds ffmpeg arguments that turn any input (MKV, AVI, HEVC, AC3/EAC3 audio…)
  * into a browser-friendly MPEG-TS stream (H.264 + AAC) on stdout.
  */
-export function buildRemuxArgs(opts: { url: string; ua: string; start?: number; transcodeVideo?: boolean; audioIndex?: number; hasX264: boolean }): string[] {
+export function buildRemuxArgs(opts: { url: string; ua: string; start?: number; transcodeVideo?: boolean; audioIndex?: number; subtitleIndex?: number; hasX264: boolean }): string[] {
   const args = ['-hide_banner', '-loglevel', 'error', '-nostdin', '-protocol_whitelist', SAFE_PROTOCOLS, '-user_agent', opts.ua];
   args.push('-reconnect', '1', '-reconnect_streamed', '1', '-reconnect_delay_max', '5');
+  const subs = opts.subtitleIndex !== undefined && opts.subtitleIndex >= 0;
+  // With subtitles, keep the file's own timestamps on every output: stream copy restarts at the
+  // keyframe *before* the seek point, so cues timed from the seek point would show early.
+  if (subs) args.push('-copyts');
   if (opts.start && opts.start > 0) args.push('-ss', String(Math.floor(opts.start)));
   args.push('-i', opts.url);
   args.push('-map', '0:v:0?', '-map', `0:a:${opts.audioIndex ?? 0}?`);
@@ -23,6 +28,13 @@ export function buildRemuxArgs(opts: { url: string; ua: string; start?: number; 
   }
   args.push('-c:a', 'aac', '-b:a', '192k', '-ac', '2');
   args.push('-f', 'mpegts', '-mpegts_flags', '+resend_headers', 'pipe:1');
+  // Chosen subtitles leave the same ffmpeg process as WebVTT on fd 3, so the provider sees one
+  // connection (plans often allow just one). Cues arrive as playback reaches them.
+  // fd 4 reports the first video frame's time, which the player's clock starts from.
+  if (subs) {
+    args.push('-map', `0:s:${opts.subtitleIndex}`, '-c:s', 'webvtt', '-flush_packets', '1', '-f', 'webvtt', 'pipe:3');
+    args.push('-map', '0:v:0?', '-c:v', 'copy', '-frames:v', '1', '-f', 'framemd5', 'pipe:4');
+  }
   return args;
 }
 
@@ -36,25 +48,42 @@ export async function handleRemux(req: IncomingMessage, res: ServerResponse, par
   } catch (e) {
     return sendError(res, 403, (e as Error).message);
   }
+  const sid = /^[\w-]{8,64}$/.test(params.get('sid') ?? '') ? params.get('sid')! : undefined;
   const args = buildRemuxArgs({
     url,
     ua: userAgentFrom(params),
     start: Number(params.get('start') ?? 0) || 0,
     transcodeVideo: params.get('video') === 'transcode',
     audioIndex: Number(params.get('audio') ?? 0) || 0,
+    subtitleIndex: sid && params.get('sub') !== null ? Number(params.get('sub')) : undefined,
     hasX264: info.libx264,
   });
-  const child = spawn(ffmpegPath(), args, { stdio: ['ignore', 'pipe', 'pipe'] });
+  const child = spawn(ffmpegPath(), args, { stdio: ['ignore', 'pipe', 'pipe', 'pipe', 'pipe'] });
+  if (sid && args.includes('pipe:3')) {
+    const session: SubtitleSession = { text: '', done: false, at: Date.now(), base: null };
+    let md5 = '';
+    (child.stdio[4] as NodeJS.ReadableStream).on('data', (d: Buffer) => {
+      md5 += d.toString();
+      if (session.base === null) session.base = firstFrameTime(md5);
+    });
+    subtitleSessions.set(sid, session);
+    const fd3 = child.stdio[3] as NodeJS.ReadableStream;
+    fd3.on('data', (d: Buffer) => {
+      if (session.text.length < 8 * 1024 * 1024) session.text += d.toString('utf8');
+      session.at = Date.now();
+    });
+    fd3.on('end', () => (session.done = true));
+  }
   let stderr = '';
-  child.stderr.on('data', (d: Buffer) => {
+  child.stderr!.on('data', (d: Buffer) => {
     stderr = (stderr + d.toString()).slice(-2000);
   });
   let started = false;
-  child.stdout.once('data', () => {
+  child.stdout!.once('data', () => {
     started = true;
   });
   res.writeHead(200, { 'Content-Type': 'video/mp2t', 'Cache-Control': 'no-store', 'Access-Control-Allow-Origin': '*' });
-  child.stdout.pipe(res);
+  child.stdout!.pipe(res);
   const kill = () => {
     if (child.exitCode === null) child.kill('SIGKILL');
   };
@@ -65,7 +94,83 @@ export async function handleRemux(req: IncomingMessage, res: ServerResponse, par
   });
 }
 
-/** Returns container duration and codecs via ffprobe (used for remux seeking). */
+let ffprobeOk: boolean | undefined;
+function ffprobeBin(): string {
+  return process.env.CHILLY_FFPROBE ?? ffmpegPath().replace(/ffmpeg(\.exe)?$/, 'ffprobe$1');
+}
+/** Some ffmpeg installs come without ffprobe; ffmpeg's own stream listing is used then. */
+function hasFfprobe(): boolean {
+  ffprobeOk ??= spawnSync(ffprobeBin(), ['-version'], { stdio: 'ignore' }).status === 0;
+  return ffprobeOk;
+}
+
+/** Tracks per file URL. A file's tracks don't change, and reading them costs a provider connection. */
+interface ProbeEntry {
+  at: number;
+  result: Promise<MediaProbe | null>;
+  /** Requests still waiting for a read in progress; at 0 the read is stopped. */
+  waiters: number;
+  done: boolean;
+  kill: () => void;
+}
+const probeCache = new Map<string, ProbeEntry>();
+const PROBE_TTL = 12 * 3_600_000;
+
+/**
+ * Tracks for a file: cached, and a read already in flight (e.g. started by the movie page) is shared.
+ * When every caller has given up (`signal`), the read is stopped: on a one-connection plan a read
+ * nobody waits for would block the stream the player is about to open.
+ */
+export function probeMedia(url: string, ua: string, signal?: AbortSignal): Promise<MediaProbe | null> {
+  let entry = probeCache.get(url);
+  if (!entry || (entry.done && Date.now() - entry.at > PROBE_TTL)) {
+    const run = runProbe(url, ua);
+    const e: ProbeEntry = { at: Date.now(), result: run.result, waiters: 0, done: false, kill: run.kill };
+    entry = e;
+    probeCache.set(url, e);
+    void run.result.then((r) => {
+      e.done = true;
+      if (!r && probeCache.get(url) === e) probeCache.delete(url); // failures are retried next time
+      if (probeCache.size > 2000) probeCache.delete(probeCache.keys().next().value!);
+    });
+  }
+  if (entry.done || !signal) return entry.result;
+  const e = entry;
+  e.waiters++;
+  signal.addEventListener('abort', () => {
+    e.waiters--;
+    if (e.waiters <= 0 && !e.done) {
+      e.kill();
+      if (probeCache.get(url) === e) probeCache.delete(url);
+    }
+  }, { once: true });
+  return e.result;
+}
+
+/** Runs ffprobe (or ffmpeg -i when ffprobe is missing); resolves the tracks, or null. */
+function runProbe(url: string, ua: string, timeoutMs = 20000): { result: Promise<MediaProbe | null>; kill: () => void } {
+  const viaProbe = hasFfprobe();
+  const child = viaProbe
+    ? spawn(ffprobeBin(), ffprobeArgs(url, ua, SAFE_PROTOCOLS), { stdio: ['ignore', 'pipe', 'ignore'] })
+    : spawn(ffmpegPath(), ffmpegInfoArgs(url, ua, SAFE_PROTOCOLS), { stdio: ['ignore', 'ignore', 'pipe'] });
+  const result = new Promise<MediaProbe | null>((resolve) => {
+    let out = '';
+    (viaProbe ? child.stdout! : child.stderr!).on('data', (d: Buffer) => (out += d.toString()));
+    const timer = setTimeout(() => child.kill('SIGKILL'), timeoutMs);
+    child.on('error', () => resolve(null));
+    child.on('close', () => {
+      clearTimeout(timer);
+      try {
+        resolve(viaProbe ? parseProbe(JSON.parse(out)) : parseFfmpegInfo(out));
+      } catch {
+        resolve(null);
+      }
+    });
+  });
+  return { result, kill: () => child.exitCode === null && child.kill('SIGKILL') };
+}
+
+/** Container duration, codecs, and audio/subtitle tracks (shared/media.ts). */
 export async function handleProbe(_req: IncomingMessage, res: ServerResponse, params: URLSearchParams): Promise<void> {
   if (!ffmpegInfo().ffmpeg) return sendError(res, 501, 'ffmpeg is not installed on the server');
   const url = params.get('url');
@@ -75,21 +180,42 @@ export async function handleProbe(_req: IncomingMessage, res: ServerResponse, pa
   } catch (e) {
     return sendError(res, 403, (e as Error).message);
   }
-  const bin = process.env.CHILLY_FFPROBE ?? ffmpegPath().replace(/ffmpeg(\.exe)?$/, 'ffprobe$1');
-  const child = spawn(bin, ['-v', 'error', '-protocol_whitelist', SAFE_PROTOCOLS, '-user_agent', userAgentFrom(params), '-show_entries', 'format=duration:stream=codec_type,codec_name,width,height,channels:stream_tags=language', '-of', 'json', url], { stdio: ['ignore', 'pipe', 'ignore'] });
-  let out = '';
-  child.stdout.on('data', (d: Buffer) => (out += d.toString()));
-  const timer = setTimeout(() => child.kill('SIGKILL'), 20000);
-  child.on('close', () => {
-    clearTimeout(timer);
-    try {
-      const j = JSON.parse(out) as { format?: { duration?: string }; streams?: { codec_type: string; codec_name: string; width?: number; height?: number; channels?: number; tags?: { language?: string } }[] };
-      sendJson(res, 200, {
-        duration: Number(j.format?.duration) || null,
-        streams: (j.streams ?? []).map((s) => ({ type: s.codec_type, codec: s.codec_name, width: s.width, height: s.height, channels: s.channels, language: s.tags?.language })),
-      });
-    } catch {
-      sendError(res, 502, 'Probe failed');
-    }
-  });
+  // A client that stops waiting (player gave up, page left) closes the request; the read stops with it.
+  const gone = new AbortController();
+  res.on('close', () => !res.writableEnded && gone.abort());
+  const probe = await probeMedia(url, userAgentFrom(params), gone.signal);
+  if (gone.signal.aborted) return;
+  if (probe) sendJson(res, 200, probe);
+  else sendError(res, 502, 'Probe failed');
+}
+
+// ------------------------------------------------------------- subtitles ---
+/** WebVTT written by running remux processes, by client session id. */
+interface SubtitleSession {
+  text: string;
+  done: boolean;
+  at: number;
+  /** File time (s) of the first video frame sent; the player's clock is 0 there. */
+  base: number | null;
+}
+const subtitleSessions = new Map<string, SubtitleSession>();
+
+/** First packet time from ffmpeg's framemd5 output ("#tb 0: 1/1000" … "0, dts, pts, …"). */
+export function firstFrameTime(md5: string): number | null {
+  const tb = md5.match(/^#tb 0: (\d+)\/(\d+)/m);
+  const line = md5.split('\n').find((l) => /^\s*0,/.test(l));
+  if (!tb || !line) return null;
+  const pts = Number(line.split(',')[2]);
+  return Number.isFinite(pts) ? (pts * Number(tb[1])) / Number(tb[2]) : null;
+}
+setInterval(() => {
+  for (const [k, v] of subtitleSessions) if (Date.now() - v.at > 30 * 60_000) subtitleSessions.delete(k);
+}, 60_000).unref();
+
+/** GET /api/remux/subs?sid=…&from=N → the WebVTT text after byte N so far, and whether it is complete. */
+export function handleRemuxSubs(_req: IncomingMessage, res: ServerResponse, params: URLSearchParams): void {
+  const s = subtitleSessions.get(params.get('sid') ?? '');
+  if (!s) return sendJson(res, 200, { text: '', next: 0, done: false, base: null });
+  const from = Math.max(0, Number(params.get('from') ?? 0) || 0);
+  sendJson(res, 200, { text: s.text.slice(from), next: s.text.length, done: s.done, base: s.base });
 }

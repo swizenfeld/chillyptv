@@ -166,7 +166,13 @@ const ALIASES: Record<string, string[]> = {
   'rayo vallecano': ['rayo'],
   'paris saint germain': ['psg', 'paris sg'],
   'bayern munich': ['bayern', 'bayern munchen'],
-  'internazionale': ['inter milan', 'inter'],
+  'internazionale': ['inter milan', 'inter', 'inter de milan'],
+  // Spanish-language guides (Argentina, Latin America) name some clubs their own way.
+  'napoli': ['napoles'],
+  'marseille': ['marsella', 'olympique de marsella', 'olympique marseille'],
+  'sporting cp': ['sporting de lisboa', 'sporting lisboa'],
+  'copenhagen': ['copenhague'],
+  'bayer leverkusen': ['leverkusen', 'bayer leverkusen'],
   'inter miami': ['miami'],
   'la galaxy': ['galaxy', 'los angeles galaxy'],
   'boca juniors': ['boca'],
@@ -184,6 +190,11 @@ const ALIASES: Record<string, string[]> = {
   'san martin tucuman': ['san martin de tucuman'],
   'instituto cordoba': ['instituto de cordoba'],
   'racing cordoba': ['racing de cordoba'],
+  'newell s old boys': ['newells', 'newell s', 'newells old boys'],
+  'union santa fe': ['union', 'union de santa fe'],
+  'gimnasia mendoza': ['gimnasia', 'gimnasia de mendoza', 'gimnasia y esgrima de mendoza'],
+  'gimnasia y tiro salta': ['gimnasia y tiro', 'gimnasia y tiro de salta'],
+  'belgrano cordoba': ['belgrano', 'belgrano de cordoba'],
 };
 
 const ALIAS_INDEX: { canon: string; names: string[] }[] = Object.entries(ALIASES).map(([canon, names]) => ({ canon, names: [canon, ...names] }));

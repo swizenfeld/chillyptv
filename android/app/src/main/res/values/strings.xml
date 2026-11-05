@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">ChillyPTV</string>
+    <string name="title_activity_main">ChillyPTV</string>
+    <string name="package_name">tv.chillyptv.app</string>
+    <string name="custom_url_scheme">tv.chillyptv.app</string>
+</resources>

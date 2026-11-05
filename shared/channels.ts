@@ -41,6 +41,8 @@ const REGION_LANG: Record<string, string> = {
 
 /** Explicit language words in a name win over the region. Keys are lower-case, accent-free. */
 const LANG_WORDS: [RegExp, string][] = [
+  // Spanish-language networks, wherever they're listed ("US| ESPN DEPORTES", "US| TELEMUNDO (KNSO) FRESNO").
+  [/\b(deportes|telemundo|univision|unimas|galavision|tudn|vix|estrella tv|azteca|canal de las estrellas)\b/, 'es'],
   // Not "esp": "Levante vs. Atlético (ESP)" names the league's country, not the commentary.
   [/\b(espanol|castellano|spanish|latino|spa)\b/, 'es'],
   [/\b(english|eng)\b/, 'en'],
@@ -73,7 +75,8 @@ function fold(s: string): string {
     .toLowerCase();
 }
 
-const PREFIX_RE = /^\s*[[(]?\s*([a-z]{2,6})\s*[\])]?\s*(?:[|:»>]|\s-\s|\s–\s)\s*/i;
+// "LAT| ", "UK: ", "AR - ", "[ES] ", and "|EN| " (some providers wrap the code in bars).
+const PREFIX_RE = /^\s*(?:\|\s*([a-z]{2,6})\s*\||[[(]?\s*([a-z]{2,6})\s*[\])]?\s*(?:[|:»>]|\s-\s|\s–\s))\s*/i;
 
 /** Parses tags from a channel name, using the category name as a fallback for region/language. */
 export function parseChannelTags(name: string, categoryName = ''): ChannelTags {
@@ -85,13 +88,15 @@ export function parseChannelTags(name: string, categoryName = ''): ChannelTags {
   let rest = folded.replace(MARKETING_RE, ' ');
   let region: string | undefined;
   const pm = folded.match(PREFIX_RE);
-  if (pm && REGION_LANG[pm[1].toUpperCase()] !== undefined) {
-    region = pm[1].toUpperCase();
+  const pcode = pm?.[1] ?? pm?.[2];
+  if (pm && pcode && REGION_LANG[pcode.toUpperCase()] !== undefined) {
+    region = pcode.toUpperCase();
     rest = folded.slice(pm[0].length);
   }
   if (!region) {
     const cm = fold(categoryName).match(PREFIX_RE);
-    if (cm && REGION_LANG[cm[1].toUpperCase()] !== undefined) region = cm[1].toUpperCase();
+    const ccode = cm?.[1] ?? cm?.[2];
+    if (ccode && REGION_LANG[ccode.toUpperCase()] !== undefined) region = ccode.toUpperCase();
   }
 
   let quality: Quality = 'unknown';
