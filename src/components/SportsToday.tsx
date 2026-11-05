@@ -56,10 +56,13 @@ export function SportsToday({ data, filter, selectedId, onSelect, onOpen }: {
             </button>
           ))}
         </div>
-        <p className="sports-source">
-          {data.source === 'feed' ? 'Fixtures from ESPN, matched to your TV guide and channel names.' : 'Matches found in your TV guide.'}
-          {data.feedError && ` ${data.feedError}, so only guide listings are shown.`}
-        </p>
+        <div className="sports-meta">
+          <p className="sports-source">
+            {data.source === 'feed' ? 'Fixtures from ESPN, matched to your TV guide and channel names.' : 'Matches found in your TV guide.'}
+            {data.feedError && ` ${data.feedError}, so only guide listings are shown.`}
+          </p>
+          <CommentaryFirst />
+        </div>
       </div>
       {!matches.length ? (
         <Empty icon={<Trophy size={36} />} title={filter ? `No matches for “${filter}”` : 'No matches today'}>
@@ -89,6 +92,32 @@ export function SportsToday({ data, filter, selectedId, onSelect, onOpen }: {
           )}
         </div>
       )}
+    </div>
+  );
+}
+
+const COMMENTARY: [string, string][] = [
+  ['es', 'Español'],
+  ['en', 'English'],
+];
+
+/**
+ * Which commentary is listed first on every match (the same choice as Settings → Sports → Best
+ * feed), switchable right here. The other language stays second.
+ */
+function CommentaryFirst() {
+  const langs = useSettings((s) => s.feedLanguages);
+  const set = useSettings((s) => s.set);
+  const first = langs[0] ?? 'en';
+  const choose = (v: string) => set({ feedLanguages: [v, ...langs.filter((x) => x !== v)].slice(0, 2) });
+  return (
+    <div className="sports-chips sports-lang" role="group" aria-label="Commentary listed first">
+      <span className="sports-lang-label">Commentary first</span>
+      {COMMENTARY.map(([v, label]) => (
+        <button key={v} className={first === v ? 'active' : ''} aria-pressed={first === v} onClick={() => choose(v)}>
+          {label}
+        </button>
+      ))}
     </div>
   );
 }

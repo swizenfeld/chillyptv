@@ -4238,3 +4238,21 @@ textarea.input {
   flex: none;
   white-space: nowrap;
 }
+
+/* Sports today: the source note, with the commentary-language switch beside it. */
+.sports-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px 16px;
+}
+.sports-lang {
+  align-items: center;
+  flex: none;
+}
+.sports-lang-label {
+  color: var(--muted);
+  font-size: 12px;
+  margin-right: 2px;
+}

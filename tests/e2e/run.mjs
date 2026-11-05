@@ -204,6 +204,14 @@ await step('sports today: fixtures matched to channels', async () => {
   if (await villa.locator('.match-more').count()) await villa.locator('.match-more').first().click();
   await villa.locator('.match-ch', { hasText: 'SOCCER PPV 128' }).getByText('Ended').waitFor();
   if (await page.locator('.match-ch', { hasText: 'PPV 410' }).count()) throw new Error('empty event slot listed as a feed');
+  // "Commentary first": Español lists a Spanish feed first, English puts it back.
+  const firstBadges = () => live.locator('.match-ch').first().locator('.match-ch-badges').textContent();
+  if (await live.locator('.match-more').count()) await live.locator('.match-more').first().click();
+  const allBadges = await live.locator('.match-ch-badges').allTextContents();
+  await page.locator('.sports-lang button', { hasText: 'Español' }).click();
+  if (allBadges.some((b) => b.includes('ES')) && !(await firstBadges()).includes('ES')) throw new Error(`Español first, but the first feed is ${await firstBadges()} (feeds: ${allBadges})`);
+  await page.locator('.sports-lang button', { hasText: 'English' }).click();
+  if ((await firstBadges()).includes('ES') && allBadges.some((b) => b.includes('EN'))) throw new Error('English first, but a Spanish feed leads');
   // Fixtures none of your channels carry are folded away; opened, they say so and name the broadcaster.
   await page.locator('.sports-fold').click();
   await page.locator('.match-card', { hasText: 'Levante' }).getByText('Not found in your channels').waitFor();
