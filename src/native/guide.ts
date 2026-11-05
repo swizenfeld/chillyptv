@@ -14,8 +14,22 @@ const NativeGuide = registerPlugin<NativeGuidePlugin>('NativeGuide');
  * needs: the native side scans the guide's channels, the shared resolver picks the ones linked to
  * playlist channels (or linked by hand), and only those listings come back to the web view.
  */
+type Scan = Awaited<ReturnType<NativeGuidePlugin['scan']>>;
+
+/** Guides being downloaded: a second request for the same guide (a refresh while one runs) waits for it. */
+const scanning = new Map<string, Promise<Scan>>();
+
+function scanGuide(url: string, ua: string | undefined): Promise<Scan> {
+  let p = scanning.get(url);
+  if (!p) {
+    p = NativeGuide.scan({ url, userAgent: ua }).finally(() => scanning.delete(url));
+    scanning.set(url, p);
+  }
+  return p;
+}
+
 export async function loadGuideNatively(url: string, ua: string | undefined, wants: GuideWant[], keep: string[], window: { from: number; to: number }): Promise<EpgData> {
-  const scan = await NativeGuide.scan({ url, userAgent: ua });
+  const scan = await scanGuide(url, ua);
   const channels: EpgData['channels'] = {};
   for (const c of scan.channels) if (c.id) channels[c.id] = { id: c.id, name: c.name, icon: c.icon };
   const skeleton: EpgData = { channels, programmes: {}, counts: scan.counts, fetchedAt: Date.now() };

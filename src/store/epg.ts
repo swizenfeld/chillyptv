@@ -221,7 +221,7 @@ export const useEpg = create<EpgState>()((set, get) => ({
     try {
       let merged: EpgData | null = null;
       const sources: EpgSourceStatus[] = [];
-      for (const url of urls.slice(0, 8)) {
+      for (const [i, url] of urls.slice(0, 8).entries()) {
         try {
           const d = await downloadEpg(url, profile, catalog, !!opts.force || retryDue);
           const { staleError, ...guide } = d;
@@ -229,7 +229,12 @@ export const useEpg = create<EpgState>()((set, get) => ({
           // A last-good copy keeps the listings but still counts as the source being down.
           sources.push({ url, ok: !staleError, channels: Object.keys(d.counts ?? d.programmes).length, ...(staleError ? { error: staleError } : {}) });
         } catch (e) {
-          sources.push({ url, ok: false, channels: 0, error: (e as Error).message });
+          // The provider's guide failed this time: its last listings stay (the extra sources fill
+          // around them) rather than the guide shrinking to the extra sources alone.
+          if (i === 0 && current) {
+            merged = current;
+            sources.push({ url, ok: false, channels: Object.keys(current.counts ?? current.programmes).length, error: `${(e as Error).message}. Showing the last listings` });
+          } else sources.push({ url, ok: false, channels: 0, error: (e as Error).message });
         }
       }
       if (get().profileId !== profile.id || gen !== loadGeneration) return;

@@ -23,6 +23,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.TimeZone;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.zip.GZIPInputStream;
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -38,6 +39,8 @@ import org.xmlpull.v1.XmlPullParser;
 @CapacitorPlugin(name = "NativeGuide")
 public class NativeGuidePlugin extends Plugin {
 
+    private static final ConcurrentHashMap<String, Object> LOCKS = new ConcurrentHashMap<>();
+
     @PluginMethod
     public void scan(PluginCall call) {
         String url = call.getString("url");
@@ -49,7 +52,14 @@ public class NativeGuidePlugin extends Plugin {
         new Thread(() -> {
             try {
                 File file = new File(getContext().getCacheDir(), "guide-" + Integer.toHexString(url.hashCode()) + ".xml");
-                download(url, ua, file);
+                removeAbandonedDownloads(file.getParentFile());
+                // One download per guide at a time: a second request (a refresh while one runs)
+                // waits, then uses the copy that was just saved instead of fetching it again.
+                Object lock = LOCKS.computeIfAbsent(file.getName(), k -> new Object());
+                synchronized (lock) {
+                    boolean justSaved = file.exists() && System.currentTimeMillis() - file.lastModified() < 120_000;
+                    if (!justSaved) download(url, ua, file);
+                }
                 JSONArray channels = new JSONArray();
                 JSONObject counts = new JSONObject();
                 Map<String, Integer> n = new HashMap<>();
@@ -125,6 +135,14 @@ public class NativeGuidePlugin extends Plugin {
         }, "guide-programmes").start();
     }
 
+    /** Half-written guides from downloads that were cut off (an older build kept them): they can be large. */
+    private static void removeAbandonedDownloads(File dir) {
+        File[] parts = dir.listFiles((d, name) -> name.startsWith("guide-") && name.endsWith(".part"));
+        if (parts == null) return;
+        long cutoff = System.currentTimeMillis() - 30 * 60_000L;
+        for (File f : parts) if (f.lastModified() < cutoff) f.delete();
+    }
+
     /** Downloads to `file`, unpacking gzip; follows redirects across http/https. */
     private static void download(String url, String ua, File file) throws IOException {
         HttpURLConnection c = null;
@@ -147,19 +165,31 @@ public class NativeGuidePlugin extends Plugin {
             }
             break;
         }
-        File tmp = new File(file.getPath() + ".part");
-        try (InputStream raw = new BufferedInputStream(c.getInputStream(), 1 << 16); OutputStream out = new FileOutputStream(tmp)) {
-            raw.mark(4);
-            int b1 = raw.read();
-            int b2 = raw.read();
-            raw.reset();
-            InputStream in = (b1 == 0x1f && b2 == 0x8b) ? new GZIPInputStream(raw, 1 << 16) : raw;
-            byte[] buf = new byte[1 << 16];
-            for (int r; (r = in.read(buf)) > 0; ) out.write(buf, 0, r);
+        // Each download writes its own temporary file, so two can never mix their bytes.
+        File tmp = File.createTempFile(file.getName(), ".part", file.getParentFile());
+        try {
+            try (InputStream raw = new BufferedInputStream(c.getInputStream(), 1 << 16); OutputStream out = new FileOutputStream(tmp)) {
+                raw.mark(4);
+                int b1 = raw.read();
+                int b2 = raw.read();
+                raw.reset();
+                InputStream in = (b1 == 0x1f && b2 == 0x8b) ? new GZIPInputStream(raw, 1 << 16) : raw;
+                byte[] buf = new byte[1 << 16];
+                for (int r; (r = in.read(buf)) > 0; ) out.write(buf, 0, r);
+            } catch (IOException e) {
+                String m = String.valueOf(e.getMessage());
+                if (m.contains("ENOSPC") || m.toLowerCase(Locale.US).contains("no space")) throw new IOException("Not enough free space on the device for the guide");
+                throw e;
+            } finally {
+                c.disconnect();
+            }
+            if (!tmp.renameTo(file)) {
+                // Some file systems won't replace an existing file: remove the old copy and retry.
+                if (!file.delete() || !tmp.renameTo(file)) throw new IOException("Could not save the guide");
+            }
         } finally {
-            c.disconnect();
+            if (tmp.exists()) tmp.delete();
         }
-        if (!tmp.renameTo(file)) throw new IOException("Could not save the guide");
     }
 
     private static JSONObject readChannel(XmlPullParser p) throws Exception {
