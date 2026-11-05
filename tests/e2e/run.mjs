@@ -502,11 +502,17 @@ await step('remote-control navigation (Fire TV style arrows/OK)', async () => {
   await page.locator('.rail a', { hasText: 'Movies' }).first().focus();
   await page.keyboard.press('ArrowDown');
   if (!(await focused()).includes('Series')) throw new Error(`down from Movies → ${await focused()}`);
-  // Right from the sidebar lands in the categories column.
+  // Live TV starts on the channel list; Right from the sidebar returns there, Left goes to categories.
   await page.locator('.rail a', { hasText: 'Live TV' }).first().focus();
   await page.keyboard.press('ArrowRight');
+  if (!(await page.evaluate(() => !!document.activeElement?.matches('.v-list')))) throw new Error(`right from Live TV → ${await focused()}`);
+  await page.keyboard.press('ArrowLeft');
   const inCats = await page.evaluate(() => !!document.activeElement?.closest('.cat-list'));
-  if (!inCats) throw new Error(`right from Live TV → ${await focused()}`);
+  if (!inCats) throw new Error(`left from the channel list → ${await focused()}`);
+  // Up from the first channel reaches the controls above the list, not stuck in it.
+  await page.locator('.v-list').focus();
+  await page.keyboard.press('ArrowUp');
+  if (!(await page.evaluate(() => !!document.activeElement?.closest('.col-head')))) throw new Error(`up from the first channel → ${await focused()}`);
   // The channel list moves its selection with Up/Down and opens the player with OK.
   await page.locator('.v-list[role="listbox"]').focus();
   const sel0 = await page.locator('.v-list [role="option"][aria-selected="true"] .ch-name').textContent();

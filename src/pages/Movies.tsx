@@ -111,7 +111,7 @@ function VodBrowser({ kind }: { kind: Extract<ContentKind, 'movie' | 'series'> }
           { id: '__recent', name: 'Recently watched', icon: <Clock size={16} /> },
         ]}
       />
-      <section className="grid-col">
+      <section className="grid-col" data-nav-group="column">
         <div className="col-head">
           <div className="search-box">
             <Search size={16} />

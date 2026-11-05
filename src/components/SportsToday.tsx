@@ -69,7 +69,7 @@ export function SportsToday({ data, filter, selectedId, onSelect, onOpen }: {
           {!filter && <EmptyReason data={data} />}
         </Empty>
       ) : (
-        <div className="sports-scroll">
+        <div className="sports-scroll" data-autofocus>
           {sections.map(([label, list]) =>
             list.length ? (
               <section key={label} className="sports-section">

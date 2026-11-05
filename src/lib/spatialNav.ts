@@ -5,6 +5,11 @@
  * themselves (the Live TV channel list) keep doing so: their handled keys are skipped here.
  *
  * TV conventions it follows:
+ * - Columns ([data-nav-group="column"]: categories, channel list, info panel) come first: Left/Right
+ *   go to the next column over, not to a button level with you two columns away; Up/Down stay in
+ *   the column.
+ * - A focusable list (Live TV channels) is one stop; nothing inside it is focused on its own.
+ * - Text boxes keep Left/Right for the cursor, except at the start/end of the text.
  * - Things in line with you come first: Down from a poster goes to the poster below it.
  * - Groups ([data-nav-group]: content rows, the sidebar, category lists) remember where you were;
  *   entering one again lands there, or on its current item (the page you're on, the category shown).
@@ -42,8 +47,13 @@ function scope(): ParentNode {
 }
 
 function candidates(): HTMLElement[] {
-  // Rows of a focusable listbox (Live TV channels) aren't stops: the list is, and moves its own selection.
-  return [...scope().querySelectorAll<HTMLElement>(FOCUSABLE)].filter((el) => visible(el) && !(el.getAttribute('role') === 'option' && el.closest('[role="listbox"][tabindex]')));
+  // Anything inside a focusable listbox (Live TV channels: rows, their heart buttons) isn't a stop:
+  // the list is, and moves its own selection. [data-nav-skip] marks things not worth stopping on.
+  return [...scope().querySelectorAll<HTMLElement>(FOCUSABLE)].filter((el) => {
+    if (!visible(el) || el.closest('[data-nav-skip]')) return false;
+    const list = el.parentElement?.closest('[role="listbox"][tabindex]');
+    return !list;
+  });
 }
 
 interface Box {
@@ -58,7 +68,7 @@ interface Box {
  * below, the button on the same line) win, nearest first; only if there are none does the closest
  * thing at an angle count, with sideways distance weighing double.
  */
-export function nextInDirection(from: Box, dir: Dir, list: { el: HTMLElement; r: Box }[]): HTMLElement | null {
+export function nextInDirection(from: Box, dir: Dir, list: { el: HTMLElement; r: Box }[], inLineOnly = false): HTMLElement | null {
   const horizontal = dir === 'left' || dir === 'right';
   let best: HTMLElement | null = null;
   let bestKey: [number, number, number] = [2, Infinity, 0];
@@ -74,6 +84,7 @@ export function nextInDirection(from: Box, dir: Dir, list: { el: HTMLElement; r:
     const overlap = horizontal ? Math.min(from.bottom, r.bottom) - Math.max(from.top, r.top) : Math.min(from.right, r.right) - Math.max(from.left, r.left);
     const gap = Math.max(0, -overlap);
     const inLine = overlap > 0 ? 0 : 1;
+    if (inLineOnly && inLine) continue;
     const dist = Math.max(0, along) + (inLine ? gap * 2 : 0);
     // In line beats at an angle; then nearer; then more overlap.
     const key: [number, number, number] = [inLine, dist, -Math.max(0, overlap)];
@@ -110,6 +121,14 @@ function entryPoint(target: HTMLElement, from: HTMLElement): HTMLElement {
   if (!group) return target;
   const last = remembered.get(group);
   if (last && last !== from && last.isConnected && group.contains(last) && visible(last)) return last;
+  // A column entered for the first time starts on its main content ([data-autofocus]: the channel
+  // list, the first match), not on a filter chip that happens to be marked current.
+  const auto = group.dataset.navGroup === 'column' ? group.querySelector<HTMLElement>('[data-autofocus]') : null;
+  if (auto && visible(auto)) {
+    if (auto.matches(FOCUSABLE)) return auto;
+    const inside = candidates().find((el) => auto.contains(el));
+    if (inside) return inside;
+  }
   const current = group.querySelector<HTMLElement>('[aria-current="page"], [aria-selected="true"], .active');
   if (current && visible(current) && current.matches(FOCUSABLE)) return current;
   return target;
@@ -127,6 +146,48 @@ function typing(el: Element | null): boolean {
   if (!el) return false;
   if (el instanceof HTMLTextAreaElement) return true;
   return el instanceof HTMLInputElement && !['checkbox', 'radio', 'range', 'button', 'submit', 'color'].includes(el.type);
+}
+
+/** Left/Right in a text box move the cursor, unless it is already at that end of the text. */
+function cursorCanMove(el: HTMLInputElement | HTMLTextAreaElement, dir: Dir): boolean {
+  let start: number | null = null;
+  let end: number | null = null;
+  try {
+    start = el.selectionStart;
+    end = el.selectionEnd;
+  } catch {
+    return false; // input types without a cursor (number, email in some engines)
+  }
+  if (start === null || end === null) return false;
+  if (start !== end) return true;
+  return dir === 'left' ? start > 0 : end < el.value.length;
+}
+
+function column(el: Element): HTMLElement | null {
+  return el.closest<HTMLElement>('[data-nav-group="column"]');
+}
+
+/**
+ * Left/Right: the area of the nearest thing that way (the next column), so the channel list beside
+ * the categories wins over a button that happens to be level with you further across.
+ */
+function nearestArea(from: HTMLElement, dir: Dir, list: HTMLElement[]): HTMLElement[] {
+  const f = from.getBoundingClientRect();
+  let best: HTMLElement | null = null;
+  let bestAlong = Infinity;
+  for (const el of list) {
+    const r = el.getBoundingClientRect();
+    const along = dir === 'right' ? r.left - f.right : f.left - r.right;
+    // Wholly beyond the edge: a top-bar chip that starts just inside it isn't "the next column".
+    if (along < -1) continue;
+    if (along < bestAlong - 0.5) {
+      bestAlong = along;
+      best = el;
+    }
+  }
+  if (!best) return list;
+  const area = groupsOf(best).find((g) => !g.contains(from));
+  return area ? list.filter((el) => area.contains(el)) : list;
 }
 
 /** The nearest ancestor that scrolls along the axis of `dir`. */
@@ -154,7 +215,12 @@ export function focusFirstContent(): boolean {
   const active = document.activeElement as HTMLElement | null;
   if (active && active !== document.body && document.contains(active) && visible(active) && !active.closest('.rail')) return false;
   const list = candidates();
-  const first = list.find((el) => el.closest('.main') && !el.closest('.topbar')) ?? list[0];
+  // A page can name its starting point ([data-autofocus]: the Live TV channel list), else the first
+  // content item that isn't a text box (a search box would swallow Left/Right).
+  const marked = document.querySelector<HTMLElement>('[data-autofocus]');
+  const preferred = marked && (list.includes(marked) ? marked : list.find((el) => marked.contains(el)));
+  const content = (el: HTMLElement) => !!el.closest('.main') && !el.closest('.topbar');
+  const first = preferred ?? list.find((el) => content(el) && !typing(el)) ?? list.find(content) ?? list[0];
   if (!first) return false;
   focus(first);
   return true;
@@ -164,15 +230,21 @@ function move(from: HTMLElement, dir: Dir, retry = 0, within?: HTMLElement): boo
   // After scrolling a list for more items, only that list's items count: everything else moved
   // relative to it (the sidebar would suddenly look "below").
   const all = (within ? candidates().filter((el) => within.contains(el)) : candidates()).filter((el) => el !== from && !el.contains(from) && !from.contains(el));
-  const pick = (list: HTMLElement[]) => nextInDirection(from.getBoundingClientRect(), dir, list.map((el) => ({ el, r: el.getBoundingClientRect() })));
+  const pick = (list: HTMLElement[], inLineOnly = false) => nextInDirection(from.getBoundingClientRect(), dir, list.map((el) => ({ el, r: el.getBoundingClientRect() })), inLineOnly);
   let next: HTMLElement | null;
   if (dir === 'up' || dir === 'down') {
-    // Up/Down stay in the area you're in (the page, the sidebar): only Left/Right cross into the
-    // sidebar. Past the top of the page, things outside every area (the top bar) are next.
-    const region = groupsOf(from).at(-1);
+    // Up/Down stay in the column you're in, else the area (the page, the sidebar): only Left/Right
+    // cross over. Past the top of the page, things outside every area (the top bar) are next.
+    const col = column(from);
+    const region = col ?? groupsOf(from).at(-1);
     next = pick(region ? all.filter((el) => region.contains(el)) : all) ?? (region ? pick(all.filter((el) => !groupOf(el))) : null);
   } else {
-    next = pick(all);
+    const area = nearestArea(from, dir, all);
+    // Within a column, Left/Right only move along the line you're on (no diagonal jump to a button
+    // above); crossing into the next column may land at an angle.
+    const col = column(from);
+    const staying = !!col && area.every((el) => col.contains(el));
+    next = pick(area, staying);
   }
   if (next) {
     focus(entryPoint(next, from), dir);
@@ -209,7 +281,8 @@ export function installSpatialNav(): void {
     const active = document.activeElement as HTMLElement | null;
     const dir = DIRS[e.key];
     if (dir) {
-      if (typing(active) && (dir === 'left' || dir === 'right')) return; // move the text cursor
+      // Move the text cursor, unless it's at that end of the text.
+      if (typing(active) && (dir === 'left' || dir === 'right') && cursorCanMove(active as HTMLInputElement, dir)) return;
       const list = candidates();
       if (!list.length) return;
       const from = active && active !== document.body && list.includes(active) ? active : null;

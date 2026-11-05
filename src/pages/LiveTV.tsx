@@ -106,6 +106,19 @@ export function LiveTVPage() {
   const now = useNow(30000);
   const [selectedId, setSelectedId] = useState<string | null>(params.get('ch'));
   const selected = (selectedId && index?.channelById.get(selectedId)) || channels[0];
+  // The info panel (guide, logo, buttons) follows once the selection settles: holding Down on a
+  // Fire TV stick otherwise loads every channel's guide on the way.
+  const [shownId, setShownId] = useState<string | undefined>(selected?.id);
+  useEffect(() => {
+    if (selected?.id === shownId) return;
+    const t = window.setTimeout(() => setShownId(selected?.id), 220);
+    return () => window.clearTimeout(t);
+  }, [selected?.id, shownId]);
+  const shown = (shownId && shownId !== selected?.id && index?.channelById.get(shownId)) || selected;
+  const choose = (id: string) => {
+    setSelectedId(id);
+    setShownId(id);
+  };
   const narrow = typeof window !== 'undefined' && window.matchMedia('(max-width: 900px)').matches;
   // The Android / Fire TV app plays full screen in the native player only (one provider connection).
   const previewOn = settings.livePreview && !isNativeApp();
@@ -116,7 +129,7 @@ export function LiveTVPage() {
     if (index && view) for (const [k, v] of index.channelsByCategory) m.set(k, v.filter((c) => !view.hidden.has(c.id)).length);
     return m;
   }, [index, view]);
-  const versions = selected && view ? view.groups.get(view.repOf.get(selected.id) ?? '') : undefined;
+  const versions = shown && view ? view.groups.get(view.repOf.get(shown.id) ?? '') : undefined;
 
   const parentRef = useRef<HTMLDivElement>(null);
   const virtualizer = useVirtualizer({ count: channels.length, getScrollElement: () => parentRef.current, estimateSize: () => 64, overscan: 8 });
@@ -125,7 +138,7 @@ export function LiveTVPage() {
     parentRef.current?.scrollTo({ top: 0 });
   }, [cat]);
 
-  const previewSession = useMemo(() => (profile && selected && previewOn && !narrow ? liveSession(profile, selected) : null), [profile, selected, previewOn, narrow]);
+  const previewSession = useMemo(() => (profile && shown && previewOn && !narrow ? liveSession(profile, shown) : null), [profile, shown, previewOn, narrow]);
 
   if (status === 'loading' && !catalog) return <Spinner label="Loading channels…" />;
   if (!catalog || !index || !profile) return null;
@@ -142,8 +155,10 @@ export function LiveTVPage() {
     if (!channels.length) return;
     const i = Math.max(0, channels.findIndex((c) => c.id === selected?.id));
     if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      const ni = i + (e.key === 'ArrowDown' ? 1 : -1);
+      // Past either end the remote moves on (Up from the first channel reaches the search box).
+      if (ni < 0 || ni >= channels.length) return;
       e.preventDefault();
-      const ni = Math.max(0, Math.min(channels.length - 1, i + (e.key === 'ArrowDown' ? 1 : -1)));
       setSelectedId(channels[ni].id);
       virtualizer.scrollToIndex(ni, { align: 'auto' });
     } else if (e.key === 'Enter' && selected) {
@@ -172,7 +187,7 @@ export function LiveTVPage() {
           { id: '__archive', name: 'With catch-up', icon: <Archive size={16} />, count: catalog.channels.filter((c) => c.archive && !view?.hidden.has(c.id)).length },
         ]}
       />
-      <section className="channel-col">
+      <section className="channel-col" data-nav-group="column">
         <div className="col-head">
           <div className="search-box">
             <Search size={16} />
@@ -189,7 +204,7 @@ export function LiveTVPage() {
             data={sports}
             filter={filter}
             selectedId={selected?.id}
-            onSelect={(ch, m) => (narrow || !previewOn ? play.playMatch(m, ch) : setSelectedId(ch.id))}
+            onSelect={(ch, m) => (narrow || !previewOn ? play.playMatch(m, ch) : choose(ch.id))}
             onOpen={(m, ch) => play.playMatch(m, ch)}
           />
         ) : isEvents ? (
@@ -198,7 +213,7 @@ export function LiveTVPage() {
             filter={filter}
             now={minute}
             selectedId={selected?.id}
-            onSelect={(ch) => (narrow || !previewOn ? play.playChannel(ch, zapIds) : setSelectedId(ch.id))}
+            onSelect={(ch) => (narrow || !previewOn ? play.playChannel(ch, zapIds) : choose(ch.id))}
             onOpen={(ch) => play.playChannel(ch, zapIds)}
           />
         ) : channels.length === 0 ? (
@@ -206,7 +221,7 @@ export function LiveTVPage() {
             {cat === '__fav' && <p>Tap the heart next to a channel to add it.</p>}
           </Empty>
         ) : (
-          <div className="v-list" ref={parentRef} tabIndex={0} onKeyDown={onListKey} role="listbox" aria-label="Channels">
+          <div className="v-list" ref={parentRef} tabIndex={0} onKeyDown={onListKey} role="listbox" aria-label="Channels" data-autofocus>
             <div style={{ height: virtualizer.getTotalSize(), position: 'relative' }}>
               {virtualizer.getVirtualItems().map((vi) => {
                 const ch = channels[vi.index];
@@ -221,7 +236,7 @@ export function LiveTVPage() {
                     aria-selected={active}
                     className={`channel-row ${active ? 'active' : ''}`}
                     style={{ transform: `translateY(${vi.start}px)`, height: vi.size }}
-                    onClick={() => (narrow || !previewOn ? openFull(ch) : setSelectedId(ch.id))}
+                    onClick={() => (narrow || !previewOn ? openFull(ch) : choose(ch.id))}
                     onDoubleClick={() => openFull(ch)}
                   >
                     <span className="ch-num">{ch.num}</span>
@@ -255,28 +270,25 @@ export function LiveTVPage() {
           </div>
         )}
       </section>
-      {!narrow && selected && (
-        <section className="preview-col">
+      {!narrow && shown && (
+        <section className="preview-col" data-nav-group="column">
           {previewSession ? (
             <div className="preview-player">
-              <VideoPlayer session={previewSession} variant="preview" channel={selected} onExpand={() => openFull(selected)} />
+              <VideoPlayer session={previewSession} variant="preview" channel={shown} onExpand={() => openFull(shown)} />
             </div>
           ) : (
             <div className="preview-placeholder">
-              <Img src={selected.logo} alt={selected.name} className="big-logo" />
-              <button className="btn primary" onClick={() => openFull(selected)}>
-                <Play size={16} /> Watch
-              </button>
+              <Img src={shown.logo} alt={shown.name} className="big-logo" />
             </div>
           )}
           <div className="preview-actions">
-            <h2 className="preview-title" title={selected.name}>
-              <span className="ch-num">{selected.num}</span> {feedName(selected)}
+            <h2 className="preview-title" title={shown.name}>
+              <span className="ch-num">{shown.num}</span> {feedName(shown)}
             </h2>
             {versions && versions.length > 1 && (
               <label className="field version-pick">
                 <span>City / version</span>
-                <select className="select" value={selected.id} onChange={(e) => setSelectedId(e.target.value)}>
+                <select className="select" value={shown.id} onChange={(e) => choose(e.target.value)}>
                   {versions.map((v) => (
                     <option key={v.id} value={v.id}>
                       {versionLabel(v)}
@@ -286,11 +298,11 @@ export function LiveTVPage() {
               </label>
             )}
             <div className="row gap wrap">
-              <button className="btn primary" onClick={() => openFull(selected)}>
-                <Maximize2 size={16} /> Full screen
+              <button className="btn primary" onClick={() => openFull(shown)}>
+                {previewSession ? <Maximize2 size={16} /> : <Play size={16} />} {previewSession ? 'Full screen' : 'Watch'}
               </button>
-              <button className="btn" onClick={() => toggleFavorite(profile.id, { kind: 'live', id: selected.id, name: selected.name, image: selected.logo })}>
-                <Heart size={16} fill={favs.some((f) => f.id === selected.id) ? 'currentColor' : 'none'} /> Favourite
+              <button className="btn" onClick={() => toggleFavorite(profile.id, { kind: 'live', id: shown.id, name: shown.name, image: shown.logo })}>
+                <Heart size={16} fill={favs.some((f) => f.id === shown.id) ? 'currentColor' : 'none'} /> Favourite
               </button>
               {!isNativeApp() && <button
                 className="btn"
@@ -298,8 +310,8 @@ export function LiveTVPage() {
                   const mv = useLibrary.getState().multiview[profile.id] ?? { layout: '4', slots: [null, null, null, null], audioSlot: 0 };
                   const slots = [...mv.slots];
                   const empty = slots.indexOf(null);
-                  if (empty >= 0) slots[empty] = selected.id;
-                  else slots[slots.length - 1] = selected.id;
+                  if (empty >= 0) slots[empty] = shown.id;
+                  else slots[slots.length - 1] = shown.id;
                   useLibrary.getState().setMultiview(profile.id, { ...mv, slots });
                   navigate('/multiview');
                 }}
@@ -308,7 +320,7 @@ export function LiveTVPage() {
               </button>}
             </div>
           </div>
-          <ChannelEpg channel={selected} />
+          <ChannelEpg channel={shown} />
         </section>
       )}
     </div>
@@ -403,7 +415,7 @@ export function ChannelEpg({ channel, compact }: { channel: Channel; compact?: b
                 </button>
               )}
               {!past && !isNow && (
-                <button className={`icon-btn ${reminderOn ? 'active' : ''}`} onClick={() => toggleReminder(p)} title={reminderOn ? 'Remove reminder' : 'Remind me'}>
+                <button className={`icon-btn ${reminderOn ? 'active' : ''}`} onClick={() => toggleReminder(p)} title={reminderOn ? 'Remove reminder' : 'Remind me'} aria-label={reminderOn ? `Remove reminder for ${p.title}` : `Remind me about ${p.title}`}>
                   {reminderOn ? <BellRing size={16} /> : <Bell size={16} />}
                 </button>
               )}

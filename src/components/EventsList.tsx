@@ -61,7 +61,7 @@ export function EventsList({ events, filter, now, selectedId, onSelect, onOpen }
           {!filter && <p>Event channels that name an event and a time (“… | Team A vs. Team B (2026-11-02 19:00)”) show up here.</p>}
         </Empty>
       ) : (
-        <div className="sports-scroll">
+        <div className="sports-scroll" data-autofocus>
           {sections.map(([label, list]) =>
             list.length ? (
               <section key={label} className="sports-section">

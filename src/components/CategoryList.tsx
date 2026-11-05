@@ -33,7 +33,7 @@ export function CategoryList({ categories, counts, special, value, onChange }: {
   }, [categories, hidden, q, hideLocked, locked]);
 
   return (
-    <aside className="cat-list" data-nav-group>
+    <aside className="cat-list" data-nav-group="column">
       <div className="search-box small">
         <Search size={16} />
         <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Filter categories" aria-label="Filter categories" />

@@ -50,7 +50,7 @@ export function Shell() {
   return (
     <div className="shell">
       <nav className="rail" aria-label="Main" data-nav-group>
-        <div className="brand" onClick={() => navigate('/')} role="button" tabIndex={0}>
+        <div className="brand" onClick={() => navigate('/')} role="button" tabIndex={0} data-nav-skip>
           <span className="brand-mark">
             <Snowflake size={18} strokeWidth={2.4} aria-hidden />
           </span>
