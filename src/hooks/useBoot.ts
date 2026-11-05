@@ -1,3 +1,5 @@
+import { App as CapApp } from '@capacitor/app';
+import { isNativeApp } from '../native/player';
 import { installSpatialNav } from '../lib/spatialNav';
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
@@ -60,7 +62,15 @@ export function useBoot(): boolean {
     void loadEpg(profile, catalog);
     // The store decides whether anything is due: a stale guide, or an hourly retry during an outage.
     const t = setInterval(() => void loadEpg(profile, catalog), 15 * 60_000);
-    return () => clearInterval(t);
+    // Coming back to the app (a Fire TV app sits in the background for days, its timers paused).
+    const onShow = () => document.visibilityState === 'visible' && void loadEpg(profile, catalog);
+    document.addEventListener('visibilitychange', onShow);
+    const resumed = isNativeApp() ? CapApp.addListener('resume', () => void loadEpg(profile, catalog)) : null;
+    return () => {
+      clearInterval(t);
+      document.removeEventListener('visibilitychange', onShow);
+      void resumed?.then((h) => h.remove());
+    };
   }, [ready, profile, catalog, loadEpg]);
 
   useEffect(() => {
