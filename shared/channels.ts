@@ -39,6 +39,30 @@ const REGION_LANG: Record<string, string> = {
   BR: 'pt', PT: 'pt', POR: 'pt', IT: 'it', ITA: 'it', FR: 'fr', FRA: 'fr', DE: 'de', GER: 'de', NL: 'nl', TR: 'tr',
 };
 
+const LOOSE_WORDS = new Set(['EN', 'ES', 'DE', 'IT', 'CA', 'DO', 'PR', 'POR', 'SPA', 'ENG', 'PER', 'COL', 'CHI', 'ITA', 'FRA', 'GER', 'TR', 'NL', 'PE', 'BO', 'CO', 'CR']);
+
+/** Country names, as categories and guides spell them ("ARGENTINA", "ESPN 2 Argentina"). Accent-free. */
+export const COUNTRY_WORDS: [RegExp, string][] = [
+  [/\bargentina\b/, 'AR'],
+  [/\b(latinoamerica|latam|latin america|america latina|sudamerica|latino)\b/, 'LAT'],
+  [/\bmexico\b/, 'MX'],
+  [/\bcolombia\b/, 'CO'],
+  [/\bchile\b/, 'CL'],
+  [/\bperu\b/, 'PE'],
+  [/\buruguay\b/, 'UY'],
+  [/\bparaguay\b/, 'PY'],
+  [/\becuador\b/, 'EC'],
+  [/\bvenezuela\b/, 'VE'],
+  [/\bbolivia\b/, 'BO'],
+  [/\bcosta rica\b/, 'CR'],
+  [/\b(espana|spain)\b/, 'ES'],
+  [/\b(brasil|brazil)\b/, 'BR'],
+  [/\bportugal\b/, 'PT'],
+  [/\b(italia|italy)\b/, 'IT'],
+  [/\b(france|francia)\b/, 'FR'],
+  [/\b(deutschland|germany)\b/, 'DE'],
+];
+
 /** Explicit language words in a name win over the region. Keys are lower-case, accent-free. */
 const LANG_WORDS: [RegExp, string][] = [
   // Spanish-language networks, wherever they're listed ("US| ESPN DEPORTES", "US| TELEMUNDO (KNSO) FRESNO").
@@ -93,10 +117,18 @@ export function parseChannelTags(name: string, categoryName = ''): ChannelTags {
     region = pcode.toUpperCase();
     rest = folded.slice(pm[0].length);
   }
-  if (!region) {
-    const cm = fold(categoryName).match(PREFIX_RE);
-    const ccode = cm?.[1] ?? cm?.[2];
+  if (!region && categoryName) {
+    // The category: "AR| SPORTS", "AR SPORTS", or a country name ("ARGENTINA", "Deportes Argentina").
+    const cat = fold(categoryName);
+    const loose = cat.match(/^\s*([a-z]{2,3})\s+\S/)?.[1];
+    // Without a separator, a leading word may just be a word: "EN VIVO", "DE PELICULAS", "IT CROWD".
+    const cm = cat.match(PREFIX_RE);
+    const ccode = cm?.[1] ?? cm?.[2] ?? (loose && !LOOSE_WORDS.has(loose.toUpperCase()) ? loose : undefined);
     if (ccode && REGION_LANG[ccode.toUpperCase()] !== undefined) region = ccode.toUpperCase();
+    else for (const [re, code] of COUNTRY_WORDS) if (re.test(cat)) {
+      region = code;
+      break;
+    }
   }
 
   let quality: Quality = 'unknown';

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { autoGuideKey, buildGuideResolver, guideChannelRegion, regionFromUrl, trimGuide } from '../../shared/guide';
+import { autoGuideKey, buildGuideResolver, canonicalRegion, guideChannelRegion, regionFromUrl, trimGuide } from '../../shared/guide';
 import type { EpgData, EpgProgrammeTuple } from '../../shared/xmltv';
 
 const listings = (n: number): EpgProgrammeTuple[] => Array.from({ length: n }, (_, i) => [i * 3_600_000, (i + 1) * 3_600_000, `Show ${i}`]);
@@ -107,5 +107,22 @@ describe('suggested country guides', () => {
     expect(s.map((x) => [x.suggestion.key, x.missing])).toEqual([['AR', 340]]);
     expect(guideSuggestions(missing, [s[0].suggestion.url])).toEqual([]);
     expect(guideSuggestions(new Map([['AR', 3]]), [])).toEqual([]);
+  });
+});
+
+describe('channel country from the category', () => {
+  it('reads codes and country names, not Spanish words', async () => {
+    const { parseChannelTags } = await import('../../shared/channels');
+    const region = (cat: string) => parseChannelTags('TyC Sports HD', cat).region;
+    expect(region('ARGENTINA')).toBe('AR');
+    expect(region('Deportes Argentina')).toBe('AR');
+    expect(region('AR SPORTS')).toBe('AR');
+    expect(region('AR| DEPORTES')).toBe('AR');
+    expect(canonicalRegion(region('LATINO | DEPORTES'))).toBe('LAT');
+    expect(region('EN VIVO')).toBeUndefined();
+    expect(region('DE PELICULAS')).toBeUndefined();
+    expect(region('SPORTS')).toBeUndefined();
+    // The name's own prefix wins over the category.
+    expect(parseChannelTags('US| ESPN', 'ARGENTINA').region).toBe('US');
   });
 });

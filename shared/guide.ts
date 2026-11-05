@@ -2,7 +2,7 @@
  * Links playlist channels to guide (XMLTV) channels, and trims a guide to the channels a
  * playlist actually uses. Shared by the browser and the server so both resolve identically.
  */
-import { parseChannelTags } from './channels.js';
+import { COUNTRY_WORDS, parseChannelTags } from './channels.js';
 import type { EpgData } from './xmltv.js';
 
 /** Same folding as the app's search: lower case, no accents, words only. */
@@ -31,26 +31,6 @@ export function canonicalRegion(code: string | undefined): string | undefined {
   return code ? CANON[code.toUpperCase()] : undefined;
 }
 
-const COUNTRY_WORDS: [RegExp, string][] = [
-  [/\bargentina\b/, 'AR'],
-  [/\b(latinoamerica|latam|latin america|america latina|sudamerica)\b/, 'LAT'],
-  [/\bmexico\b/, 'MX'],
-  [/\bcolombia\b/, 'CO'],
-  [/\bchile\b/, 'CL'],
-  [/\bperu\b/, 'PE'],
-  [/\buruguay\b/, 'UY'],
-  [/\bparaguay\b/, 'PY'],
-  [/\becuador\b/, 'EC'],
-  [/\bvenezuela\b/, 'VE'],
-  [/\bbolivia\b/, 'BO'],
-  [/\bcosta rica\b/, 'CR'],
-  [/\b(espana|spain)\b/, 'ES'],
-  [/\b(brasil|brazil)\b/, 'BR'],
-  [/\bportugal\b/, 'PT'],
-  [/\b(italia|italy)\b/, 'IT'],
-  [/\b(france|francia)\b/, 'FR'],
-  [/\b(deutschland|germany)\b/, 'DE'],
-];
 const COUNTRY_WORDS_RE = new RegExp(COUNTRY_WORDS.map(([re]) => re.source).join('|'), 'g');
 
 /** "espn 2 argentina" → "espn 2": the country is matched separately. */

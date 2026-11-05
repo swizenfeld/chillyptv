@@ -8,9 +8,10 @@ const cache = new WeakMap<Channel, ChannelTags>();
 export function channelTags(ch: Channel): ChannelTags {
   let t = cache.get(ch);
   if (!t) {
-    const cat = useCatalog.getState().index?.categoryById.get(ch.categoryId)?.name ?? '';
-    t = parseChannelTags(ch.name, cat);
-    cache.set(ch, t);
+    const index = useCatalog.getState().index;
+    t = parseChannelTags(ch.name, index?.categoryById.get(ch.categoryId)?.name ?? '');
+    // Before the categories are indexed the country can't come from them yet: don't keep that answer.
+    if (index) cache.set(ch, t);
   }
   return t;
 }

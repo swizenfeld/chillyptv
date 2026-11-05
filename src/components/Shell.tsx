@@ -81,7 +81,7 @@ export function Shell() {
               <AlertTriangle size={14} /> {status === 'ready' ? 'Offline – showing cached list' : 'Error'}
             </span>
           )}
-          {useProxy && backendHealth() === null && (
+          {useProxy && !isNativeApp() && backendHealth() === null && (
             <span className="chip warn" title="The ChillyPTV server is not reachable, streams are requested directly by the browser.">
               <AlertTriangle size={14} /> Server offline
             </span>

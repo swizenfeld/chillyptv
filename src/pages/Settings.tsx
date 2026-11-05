@@ -1,5 +1,6 @@
 import { isNativeApp } from '../native/player';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import { App as CapApp } from '@capacitor/app';
 import { del } from 'idb-keyval';
 import { Download, EyeOff, Keyboard, Lock, Palette, PlayCircle, RefreshCw, Shield, Upload, Wifi, CalendarClock, Database, Cloud, Trophy } from 'lucide-react';
 import { SportsSettings } from '../components/SportsSettings';
@@ -56,6 +57,7 @@ export function SettingsPage() {
   return (
     <div className="settings">
       <h1>Settings</h1>
+      <AppVersion />
 
       <section className="card">
         <h2>
@@ -337,6 +339,18 @@ export function SettingsPage() {
       {catKind && <CategoryManager kind={catKind} onClose={() => setCatKind(null)} />}
     </div>
   );
+}
+
+/** "ChillyPTV 1.0.9 for Fire TV": which build is installed, for support questions. */
+function AppVersion() {
+  const [version, setVersion] = useState<string | null>(isNativeApp() ? null : 'web app');
+  useEffect(() => {
+    if (!isNativeApp()) return;
+    CapApp.getInfo()
+      .then((i) => setVersion(`${i.version} for Fire TV / Android`))
+      .catch(() => setVersion('Fire TV / Android'));
+  }, []);
+  return version ? <p className="muted small app-version">ChillyPTV {version}</p> : null;
 }
 
 function SetPinDialog({ onClose }: { onClose: () => void }) {
