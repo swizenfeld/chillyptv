@@ -1,7 +1,7 @@
 import { isNativeApp } from '../native/player';
-import { useMemo } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Bell, CalendarClock, Clapperboard, Film, Heart, History, LayoutGrid, Play, Search, Trash2, Tv, UserRound, Video } from 'lucide-react';
+import { Bell, CalendarClock, ChevronLeft, ChevronRight, Clapperboard, Film, Heart, History, LayoutGrid, Play, Search, Star, Trash2, Trophy, Tv, UserRound, Video } from 'lucide-react';
 import { useCatalog } from '../store/catalog';
 import { useActiveProfile } from '../store/profiles';
 import { useFavorites, useHistory, useIsFavorite, useLibrary } from '../store/library';
@@ -9,7 +9,9 @@ import { nowNext, programmesFor, useChannelProgrammes } from '../store/epg';
 import { newReleases, releaseCategory } from '../lib/releases';
 import { useSettings } from '../store/settings';
 import { useSports } from '../store/SportsProvider';
+import type { SportsMatch } from '../store/sports';
 import { MatchCard } from '../components/SportsToday';
+import { feedName } from '../lib/channelTags';
 import { liveSession, usePlay } from '../hooks/usePlay';
 import { useParental } from '../components/Parental';
 import { LiveCard, PosterCard, Row, WideCard, channelHue } from '../components/Cards';
@@ -117,7 +119,7 @@ export function HomePage() {
 
   return (
     <div className="home">
-      {heroChannel && <LiveHero profile={profile} channel={heroChannel} now={now} onWatch={() => play.playChannel(heroChannel, recentChannels.length > 1 ? recentChannels.map((c) => c.id) : undefined)} />}
+      <HeroCarousel profile={profile} channel={heroChannel} now={now} onWatchChannel={() => heroChannel && play.playChannel(heroChannel, recentChannels.length > 1 ? recentChannels.map((c) => c.id) : undefined)} />
 
       <nav className="shortcuts" aria-label="Browse" data-nav-group>
         {shortcuts.map((t) => (
@@ -203,6 +205,192 @@ export function HomePage() {
 }
 
 /** Billboard for live TV: a muted live preview (or channel art) with what is on now. */
+const SLIDE_MS = 8000;
+const MAX_MATCHES = 8;
+
+type Slide = { id: string; match?: SportsMatch };
+
+/**
+ * The billboard: every football match live right now that one of your channels shows (your teams
+ * first, then the best-covered), then what's on your usual channel. It moves on every 8 seconds,
+ * holding still while the pointer is over it or you're stepping through the dots with the remote.
+ * Without live matches it is the single "on now" billboard it always was.
+ */
+function HeroCarousel({ profile, channel, now, onWatchChannel }: { profile: Profile; channel?: Channel; now: number; onWatchChannel: () => void }) {
+  const sports = useSports();
+  const slides = useMemo<Slide[]>(() => {
+    const live = sports.matches
+      .filter((m) => m.state === 'in' && m.channels.length > 0)
+      .sort((a, b) => Number(b.followed) - Number(a.followed) || (b.channels[0]?.score ?? 0) - (a.channels[0]?.score ?? 0) || a.fixture.start - b.fixture.start)
+      .slice(0, MAX_MATCHES);
+    const out: Slide[] = live.map((m) => ({ id: m.fixture.id, match: m }));
+    if (channel) out.push({ id: 'channel' });
+    return out;
+  }, [sports.matches, channel]);
+
+  // The slide is tracked by id: scores update every minute and must not move you to another match.
+  const [currentId, setCurrentId] = useState<string>();
+  const index = Math.max(0, slides.findIndex((s) => s.id === currentId));
+  const slide = slides[index];
+
+  const root = useRef<HTMLDivElement>(null);
+  const keepFocus = useRef(false);
+  const [hovered, setHovered] = useState(false);
+  const [onDots, setOnDots] = useState(false);
+  const [nudge, setNudge] = useState(0);
+  const reduceMotion = useMemo(() => typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches, []);
+
+  const go = (i: number) => {
+    if (!slides.length) return;
+    const next = slides[(i + slides.length) % slides.length];
+    // The slide's buttons are new elements: if you were on one, you stay on Watch.
+    keepFocus.current = !!root.current?.querySelector('.hero')?.contains(document.activeElement);
+    setCurrentId(next.id);
+  };
+
+  useLayoutEffect(() => {
+    if (!keepFocus.current) return;
+    keepFocus.current = false;
+    root.current?.querySelector<HTMLElement>('.hero-watch')?.focus({ preventScroll: true });
+  }, [slide?.id]);
+
+  const paused = hovered || onDots || reduceMotion || slides.length < 2;
+  useEffect(() => {
+    if (paused) return;
+    const t = window.setTimeout(() => {
+      if (!document.hidden) go(index + 1);
+      else setNudge((n) => n + 1);
+    }, SLIDE_MS);
+    return () => window.clearTimeout(t);
+  }, [paused, index, nudge, slides.length]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  if (!slide) return null;
+  const multi = slides.length > 1;
+  return (
+    <div
+      ref={root}
+      className={`hero-carousel ${multi ? 'multi' : ''}`}
+      role={multi ? 'region' : undefined}
+      aria-roledescription={multi ? 'carousel' : undefined}
+      aria-label={multi ? 'Live now' : undefined}
+      data-nav-group
+      onPointerEnter={(e) => e.pointerType === 'mouse' && setHovered(true)}
+      onPointerLeave={() => setHovered(false)}
+      onKeyDown={() => setNudge((n) => n + 1)}
+    >
+      {slide.match ? (
+        <MatchHero key={slide.id} match={slide.match} position={multi ? `${index + 1} of ${slides.length}` : undefined} />
+      ) : (
+        channel && <LiveHero key="channel" profile={profile} channel={channel} now={now} onWatch={onWatchChannel} />
+      )}
+      {multi && (
+        <>
+          <button className="hero-arrow prev" onClick={() => go(index - 1)} aria-label="Previous" tabIndex={-1}>
+            <ChevronLeft size={26} />
+          </button>
+          <button className="hero-arrow next" onClick={() => go(index + 1)} aria-label="Next" tabIndex={-1}>
+            <ChevronRight size={26} />
+          </button>
+          <div className="hero-dots" role="tablist" aria-label="Slides" data-nav-group onFocus={(e) => setOnDots(steppingThrough(e.target))} onBlur={() => setOnDots(false)}>
+            {slides.map((s, i) => (
+              <button
+                key={s.id}
+                role="tab"
+                aria-selected={i === index}
+                aria-label={s.match ? `${s.match.fixture.home.name} v ${s.match.fixture.away.name}` : `On now: ${channel?.name ?? ''}`}
+                className={`hero-dot ${i === index ? 'active' : ''} ${s.match ? 'match' : ''}`}
+                // With the remote, landing on a dot shows its slide; OK on it does too.
+                onFocus={() => i !== index && go(i)}
+                onClick={() => go(i)}
+              >
+                {i === index && !paused && <span className="hero-dot-fill" style={{ animationDuration: `${SLIDE_MS}ms` }} key={`${s.id}-${nudge}`} />}
+              </button>
+            ))}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+/** Focus arrived by remote or keyboard (not a click), so the viewer is stepping through the slides. */
+function steppingThrough(el: Element): boolean {
+  if (document.documentElement.classList.contains('tv-mode')) return true;
+  try {
+    return el.matches(':focus-visible');
+  } catch {
+    return false;
+  }
+}
+
+/** One live match: the score, the minute, and the best channel showing it. */
+function MatchHero({ match: m, position }: { match: SportsMatch; position?: string }) {
+  const play = usePlay();
+  const navigate = useNavigate();
+  const f = m.fixture;
+  const best = m.channels[0];
+  const more = m.channels.length - 1;
+  const scored = f.home.score !== undefined && f.away.score !== undefined;
+  const minute = f.detail && f.detail !== "0'" ? f.detail : 'Live';
+  return (
+    <section
+      className="hero match-hero"
+      aria-roledescription={position ? 'slide' : undefined}
+      aria-label={`${position ? `${position}: ` : ''}${f.home.name} ${scored ? f.home.score : ''} v ${f.away.name} ${scored ? f.away.score : ''}, ${minute}`}
+      style={{ '--hue': channelHue(f.leagueName) } as React.CSSProperties}
+    >
+      <div className="hero-media" aria-hidden>
+        <div className="hero-art match-art">
+          <div className="match-crests">
+            <Img src={f.home.logo} alt={f.home.name} className="match-crest" />
+            <Img src={f.away.logo} alt={f.away.name} className="match-crest" />
+          </div>
+        </div>
+      </div>
+      <div className="hero-scrim" />
+      <div className="hero-body">
+        <p className="hero-eyebrow">
+          <span className="live-pill">{minute}</span>
+          <span>
+            <Trophy size={14} aria-hidden /> {f.leagueName}
+          </span>
+          {m.followed && (
+            <span className="hero-yourteam">
+              <Star size={13} fill="currentColor" aria-hidden /> Your team
+            </span>
+          )}
+        </p>
+        <h1 className="hero-title hero-board">
+          {[f.home, f.away].map((t, i) => (
+            <span key={i} className="hb-team">
+              <span className="hb-name">{t.name}</span>
+              {scored && <span className="hb-score tabular">{t.score}</span>}
+            </span>
+          ))}
+        </h1>
+        {best && (
+          <div className="hero-meta">
+            <span className="hero-channel">
+              <Img src={best.channel.logo} alt="" className="hero-channel-logo" />
+              {feedName(best.channel)}
+            </span>
+            {more > 0 && <span>{more === 1 ? '1 more feed' : `${more} more feeds`}</span>}
+          </div>
+        )}
+        <div className="hero-actions">
+          <button className="btn primary big hero-watch" onClick={() => play.playMatch(m)}>
+            <Play size={18} fill="currentColor" /> Watch live
+          </button>
+          <button className="btn big glass" onClick={() => navigate('/live?cat=__sports')}>
+            <Trophy size={18} /> <span className="label-long">All matches</span>
+            <span className="label-short">Matches</span>
+          </button>
+        </div>
+      </div>
+    </section>
+  );
+}
+
 function LiveHero({ profile, channel, now, onWatch }: { profile: Profile; channel: Channel; now: number; onWatch: () => void }) {
   const navigate = useNavigate();
   // The Android / Fire TV app keeps the provider connection for the full-screen player.
@@ -242,7 +430,7 @@ function LiveHero({ profile, channel, now, onWatch }: { profile: Profile; channe
         {p && <ProgressBar value={(now - p.start) / (p.end - p.start)} className="hero-progress" />}
         {p?.desc && <p className="hero-desc">{p.desc}</p>}
         <div className="hero-actions">
-          <button className="btn primary big" onClick={onWatch}>
+          <button className="btn primary big hero-watch" onClick={onWatch}>
             <Play size={18} fill="currentColor" /> Watch live
           </button>
           <button className="btn big glass" onClick={() => navigate(`/live?ch=${encodeURIComponent(channel.id)}`)}>
