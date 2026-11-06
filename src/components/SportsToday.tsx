@@ -69,7 +69,7 @@ export function SportsToday({ data, filter, selectedId, onSelect, onOpen }: {
           {!filter && <EmptyReason data={data} />}
         </Empty>
       ) : (
-        <div className="sports-scroll" data-autofocus>
+        <div className="sports-scroll" data-autofocus=".match-ch, .match-watch">
           {sections.map(([label, list]) =>
             list.length ? (
               <section key={label} className="sports-section">
@@ -214,7 +214,7 @@ function FollowButton({ team }: { team: Team }) {
     }
   };
   return (
-    <button className={`follow-btn ${on ? 'on' : ''}`} onClick={toggle} aria-pressed={on} aria-label={on ? `Unfollow ${team.name}` : `Follow ${team.name}`} title={on ? 'Unfollow' : 'Follow team'}>
+    <button className={`follow-btn ${on ? 'on' : ''}`} onClick={toggle} data-nav-minor aria-pressed={on} aria-label={on ? `Unfollow ${team.name}` : `Follow ${team.name}`} title={on ? 'Unfollow' : 'Follow team'}>
       <Star size={15} fill={on ? 'currentColor' : 'none'} />
     </button>
   );

@@ -509,6 +509,20 @@ await step('remote-control navigation (Fire TV style arrows/OK)', async () => {
   await page.keyboard.press('ArrowLeft');
   const inCats = await page.evaluate(() => !!document.activeElement?.closest('.cat-list'));
   if (!inCats) throw new Error(`left from the channel list → ${await focused()}`);
+  // Sports today: Right from the category lands on the first match's first channel, never on a
+  // team's follow star (always shown on a TV, which has no mouse), and Up/Down stay on the channels.
+  await page.goto(`${APP}/live?cat=__sports`);
+  await page.locator('.match-ch').first().waitFor({ timeout: 30000 });
+  await page.addStyleTag({ content: '.follow-btn{opacity:1 !important}' });
+  await page.locator('.cat-item', { hasText: 'Sports today' }).focus();
+  await page.keyboard.press('ArrowRight');
+  if (!(await page.evaluate(() => document.activeElement?.classList.contains('match-ch')))) throw new Error(`right from Sports today → ${await focused()}`);
+  for (let i = 0; i < 6; i++) {
+    await page.keyboard.press('ArrowDown');
+    if (await page.evaluate(() => document.activeElement?.classList.contains('follow-btn'))) throw new Error('Down landed on a follow star');
+  }
+  await page.goto(`${APP}/live`);
+  await page.locator('.channel-row').first().waitFor();
   // Up from the first channel reaches the controls above the list, not stuck in it.
   await page.locator('.v-list').focus();
   await page.keyboard.press('ArrowUp');
