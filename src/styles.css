@@ -4036,13 +4036,11 @@ textarea.input {
    Posters, live and wide cards rise towards you: the artwork grows a little, casts a soft shadow,
    brightens slightly and catches a faint light edge. The title underneath stays put. The same
    lift marks the remote's focus on TV, in place of the focus ring. */
+/* Only the movement animates (cheap on a Fire TV's graphics chip); the shadow just appears. */
 .poster-img,
 .wide-img,
 .live-card-art {
-  transition:
-    transform 0.32s cubic-bezier(0.2, 0.8, 0.2, 1),
-    box-shadow 0.32s cubic-bezier(0.2, 0.8, 0.2, 1);
-  will-change: transform;
+  transition: transform 0.28s cubic-bezier(0.2, 0.8, 0.2, 1);
 }
 .poster-img::after,
 .wide-img::after,
@@ -4057,11 +4055,6 @@ textarea.input {
   background: linear-gradient(160deg, rgba(255, 255, 255, 0.14), transparent 42%);
   opacity: 0;
   transition: opacity 0.32s;
-}
-.poster-img img,
-.wide-img img,
-.live-card-art > img {
-  transition: filter 0.32s;
 }
 .poster-card:hover,
 .poster-card:focus-within,
@@ -4089,14 +4082,6 @@ textarea.input {
 .live-card:focus-visible .live-card-art::after {
   opacity: 1;
 }
-.poster-btn:hover .poster-img img,
-.poster-btn:focus-visible .poster-img img,
-.wide-card:hover .wide-img img,
-.wide-card:focus-visible .wide-img img,
-.live-card:hover .live-card-art > img,
-.live-card:focus-visible .live-card-art > img {
-  filter: brightness(1.08);
-}
 /* the play badge is a small glass disc, not a dark wash over the artwork */
 .poster-play {
   z-index: 2;
@@ -4108,9 +4093,7 @@ textarea.input {
   height: 22px;
   padding: 13px 12px 13px 14px;
   border-radius: 50%;
-  background: rgba(10, 10, 11, 0.55);
-  -webkit-backdrop-filter: blur(8px);
-  backdrop-filter: blur(8px);
+  background: rgba(10, 10, 11, 0.66);
   box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.22);
   transform: scale(0.8);
   transition: transform 0.32s cubic-bezier(0.2, 0.8, 0.2, 1);
@@ -4173,23 +4156,16 @@ textarea.input {
 .tv-mode .live-card:focus-visible .live-card-art::after {
   box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.35);
 }
-.tv-mode .h-scroll .poster-img,
-.tv-mode .h-scroll .wide-img,
-.tv-mode .h-scroll .live-card-art {
-  transition:
-    transform 0.32s cubic-bezier(0.2, 0.8, 0.2, 1),
-    box-shadow 0.32s cubic-bezier(0.2, 0.8, 0.2, 1),
-    filter 0.32s;
-}
+/* The rest of the row steps back (plain transparency: a filter would repaint every poster). */
 .tv-mode .h-scroll:focus-within .poster-img,
 .tv-mode .h-scroll:focus-within .wide-img,
 .tv-mode .h-scroll:focus-within .live-card-art {
-  filter: brightness(0.66) saturate(0.85);
+  opacity: 0.6;
 }
 .tv-mode .h-scroll:focus-within .poster-btn:focus-visible .poster-img,
 .tv-mode .h-scroll:focus-within .wide-card:focus-visible .wide-img,
 .tv-mode .h-scroll:focus-within .live-card:focus-visible .live-card-art {
-  filter: none;
+  opacity: 1;
 }
 .tv-mode .h-scroll {
   padding: 14px 14px 14px;
@@ -4197,11 +4173,7 @@ textarea.input {
   scroll-padding: 0 28px;
 }
 .tv-mode .see-all-tile {
-  transition:
-    transform 0.32s cubic-bezier(0.2, 0.8, 0.2, 1),
-    box-shadow 0.32s,
-    background 0.2s,
-    color 0.2s;
+  transition: transform 0.28s cubic-bezier(0.2, 0.8, 0.2, 1);
 }
 .tv-mode .see-all-tile:focus-visible {
   transform: scale(1.08);
@@ -4215,7 +4187,7 @@ textarea.input {
   .wide-img,
   .live-card-art,
   .poster-play svg {
-    transition: box-shadow 0.2s;
+    transition: none;
   }
   .poster-btn:hover .poster-img,
   .poster-btn:focus-visible .poster-img,

@@ -270,6 +270,8 @@ export interface PreparedFixture {
   home: string[];
   away: string[];
   league: string[];
+  /** Any name of either team as a whole word: one quick test rules out most programmes. */
+  either: RegExp;
 }
 
 /** Pre-computes the names to look for, so scoring thousands of programmes stays cheap. */
@@ -278,7 +280,11 @@ export function prepareFixture(f: Fixture): PreparedFixture {
   const away = teamNames(f.away);
   // A name both sides share ("Racing (Córdoba)" v "Instituto (Córdoba)") can't tell them apart.
   const shared = new Set(home.filter((n) => away.includes(n)));
-  return { fixture: f, home: home.filter((n) => !shared.has(n)), away: away.filter((n) => !shared.has(n)), league: LEAGUE_BY_ID.get(f.leagueId)?.keywords ?? [] };
+  const h = home.filter((n) => !shared.has(n));
+  const a = away.filter((n) => !shared.has(n));
+  const names = [...h, ...a].map((n) => n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+  const either = names.length ? new RegExp(`(?:^| )(?:${names.join('|')})(?= |$)`) : /(?!)/;
+  return { fixture: f, home: h, away: a, league: LEAGUE_BY_ID.get(f.leagueId)?.keywords ?? [], either };
 }
 
 const HEAD_TO_HEAD = / (v|vs|versus|x) /;
@@ -305,6 +311,8 @@ function namesBoth(text: string, pf: PreparedFixture): boolean {
 export function scorePrepared(text: string, start: number, end: number, pf: PreparedFixture, title = ''): number {
   const f = pf.fixture;
   if (end <= f.start - 15 * 60_000 || start >= f.start + 115 * 60_000) return 0;
+  // Every score needs at least one team named.
+  if (!pf.either.test(text)) return 0;
   if (namesBoth(text, pf)) return 1;
   const home = pf.home.some((n) => mentions(text, n));
   const away = pf.away.some((n) => mentions(text, n));
@@ -336,14 +344,14 @@ export function competitionHint(leagueIds: string[]): RegExp {
  * ("tnt sports" from "AR: TNT Sports HD") starts with the broadcaster name.
  * Streaming apps ("ESPN+", "Paramount+", "Apple TV") are not channels and are skipped.
  */
-export function broadcasterScore(channelName: string, f: Fixture): number {
-  const base = parseChannelTags(channelName).base;
-  for (const b of f.broadcasts) {
-    if (/\+|\bapp\b|apple tv|peacock|max\b|disney/i.test(b)) continue;
-    const n = normalize(b);
-    if (n.length >= 3 && (base === n || base.startsWith(`${n} `))) return 0.35;
-  }
+export function broadcasterScore(channelName: string, f: Fixture, base = parseChannelTags(channelName).base): number {
+  for (const n of broadcasterNames(f)) if (base === n || base.startsWith(`${n} `)) return 0.35;
   return 0;
+}
+
+/** The fixture's TV broadcasters as cleaned channel names ("tnt sports"), streaming apps left out. */
+export function broadcasterNames(f: Fixture): string[] {
+  return f.broadcasts.filter((b) => !/\+|\bapp\b|apple tv|peacock|max\b|disney/i.test(b)).map(normalize).filter((n) => n.length >= 3);
 }
 
 // ------------------------------------------------------------------ guide-only detection

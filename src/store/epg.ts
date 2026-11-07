@@ -86,9 +86,17 @@ export function resolveGuideKey(ch: Channel, depth = 0): string | undefined {
     const other = useCatalog.getState().index?.channelById.get(override.slice(2));
     if (other) return resolveGuideKey(other, depth + 1);
   }
+  // The automatic link only changes with the guide (a new resolver): cached per channel object.
+  const hit = autoKeys.get(ch);
+  if (hit && hit.resolver === resolver) return hit.key;
   const tags = channelTags(ch);
-  return autoGuideKey(resolver, ch.epgId, ch.name, tags.base, tags.region ?? '');
+  const key = autoGuideKey(resolver, ch.epgId, ch.name, tags.base, tags.region ?? '');
+  // (Before the categories are indexed the channel's country may still be unknown: not kept.)
+  if (useCatalog.getState().index) autoKeys.set(ch, { resolver, key });
+  return key;
 }
+
+const autoKeys = new WeakMap<Channel, { resolver: GuideResolver; key: string | undefined }>();
 
 /** How the channel's guide was found, for the "Fix guide" dialog. */
 export function guideLinkKind(ch: Channel): 'manual' | 'borrowed' | 'auto' | 'none' {

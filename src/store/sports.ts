@@ -7,7 +7,7 @@ import { useCatalog } from './catalog';
 import { programmesFor, useEpg } from './epg';
 import { isCategoryLocked, isUnlocked, useSettings } from './settings';
 import {
-  broadcasterScore, channelNameScore, competitionHint, detectGuideFixture, fixtureKey, followKeys, isFollowed, prepareFixture, scorePrepared, stateAt, type Fixture,
+  broadcasterNames, channelNameScore, competitionHint, detectGuideFixture, fixtureKey, followKeys, isFollowed, prepareFixture, scorePrepared, stateAt, type Fixture,
 } from '../../shared/sports';
 import { compareRank, feedRank, type ChannelTags } from '../../shared/channels';
 import { channelTags } from '../lib/channelTags';
@@ -119,7 +119,7 @@ function useFixtureFeed(leagues: string[], enabled: boolean): FeedState {
   return state;
 }
 
-interface IndexedProgramme {
+export interface IndexedProgramme {
   channel: Channel;
   p: Programme;
   /** Normalised lazily: only entries near a kick-off (or with a competition hint) ever need it. */
@@ -147,6 +147,104 @@ export function diversify(list: MatchChannel[]): MatchChannel[] {
   return [...lead, ...rest];
 }
 
+/** A playlist channel as matching needs it: normalised name and cleaned base name, read once. */
+export interface IndexedChannel {
+  ch: Channel;
+  name: string;
+  base: string;
+}
+
+/**
+ * Channels by the words of their names, so a match only checks channels that could name it
+ * (a playlist has 15,000 channels; a team or broadcaster name appears in a handful).
+ */
+export interface ChannelIndex {
+  list: IndexedChannel[];
+  byWord: Map<string, number[]>;
+  byBaseWord: Map<string, number[]>;
+}
+
+export function indexChannels(list: IndexedChannel[]): ChannelIndex {
+  const byWord = new Map<string, number[]>();
+  const byBaseWord = new Map<string, number[]>();
+  const add = (m: Map<string, number[]>, w: string, i: number) => {
+    if (!w) return;
+    const a = m.get(w);
+    if (!a) m.set(w, [i]);
+    else if (a[a.length - 1] !== i) a.push(i);
+  };
+  list.forEach((c, i) => {
+    for (const w of c.name.split(' ')) add(byWord, w, i);
+    add(byBaseWord, c.base.split(' ')[0], i);
+  });
+  return { list, byWord, byBaseWord };
+}
+
+/** Indices of channels whose name has the first word of any of `phrases`, in playlist order. */
+function withFirstWords(m: Map<string, number[]>, phrases: string[]): number[] {
+  const out = new Set<number>();
+  for (const p of phrases) for (const i of m.get(p.split(' ')[0]) ?? []) out.add(i);
+  return [...out].sort((a, b) => a - b);
+}
+
+export interface MatchedFixture {
+  fixture: Fixture;
+  /** Every channel found for it, unordered: ranking by your preferences is cheap and done after. */
+  found: MatchChannel[];
+}
+
+/** Best feed first: event slots that ended last, then confidence, your language, quality. */
+export function rankFeeds(found: MatchChannel[], prefs: { languages: string[]; maxQuality: Parameters<typeof feedRank>[1]['maxQuality'] }): MatchChannel[] {
+  const tier = (score: number) => (score >= 1 ? 0 : score >= 0.6 ? 1 : 2);
+  const ranked = found.map((c) => ({ c, e: c.tags.event === 'ended' ? 1 : 0, t: tier(c.score), r: feedRank(c.tags, prefs) }));
+  ranked.sort((a, b) => a.e - b.e || a.t - b.t || compareRank(a.r, b.r) || a.c.channel.num - b.c.channel.num);
+  return diversify(ranked.map((x) => x.c));
+}
+
+/**
+ * The channels showing each fixture, best first. Pure and independent of the clock: it reruns
+ * when fixtures, the guide or the channels change, not every minute.
+ */
+export function matchFixtures(fixtures: Fixture[], idx: ChannelIndex, guideList: IndexedProgramme[]): MatchedFixture[] {
+  return fixtures.map((f) => {
+    const pf = prepareFixture(f);
+    const best = new Map<string, MatchChannel>();
+    const offer = (m: MatchChannel) => {
+      if (m.tags.event === 'idle') return; // "- NO EVENT STREAMING -" placeholder slots
+      const prev = best.get(m.channel.id);
+      if (!prev || m.score > prev.score) best.set(m.channel.id, m);
+    };
+    // 1. TV guide: only entries overlapping the match window are normalised and scored.
+    const lo = f.start - 15 * 60_000;
+    const hi = f.start + 115 * 60_000;
+    for (const ip of guideList) {
+      if (ip.p.end <= lo || ip.p.start >= hi) continue;
+      const score = scorePrepared(textOf(ip), ip.p.start, ip.p.end, pf, titleOf(ip));
+      if (score) offer({ channel: ip.channel, score, programme: ip.p, via: 'guide', tags: channelTags(ip.channel) });
+    }
+    // 2. Event / PPV channels named after the match: only channels with a home-team word can be.
+    for (const i of withFirstWords(idx.byWord, pf.home)) {
+      const { ch, name } = idx.list[i];
+      if (channelNameScore(name, pf)) offer({ channel: ch, score: 1, via: 'channel', tags: channelTags(ch) });
+    }
+    // 3. Channels named after a listed broadcaster ("TNT Sports 1") are weaker hints.
+    const bnames = broadcasterNames(f);
+    if (bnames.length) {
+      let added = 0;
+      for (const i of withFirstWords(idx.byBaseWord, bnames)) {
+        if (added >= 6) break;
+        const { ch, base } = idx.list[i];
+        if (best.has(ch.id)) continue;
+        if (bnames.some((n) => base === n || base.startsWith(`${n} `))) {
+          offer({ channel: ch, score: 0.35, via: 'broadcaster', tags: channelTags(ch) });
+          added++;
+        }
+      }
+    }
+    return { fixture: f, found: [...best.values()] };
+  });
+}
+
 /**
  * Today's matches for the tracked competitions and the channels showing them.
  * Fixtures come from the online feed when the server can reach it, otherwise they
@@ -167,14 +265,18 @@ export function useSportsToday(active = true): SportsToday {
     return () => window.clearInterval(t);
   }, []);
 
-  // Visible channels (hidden and locked categories excluded) with normalised names.
-  const channels = useMemo(() => {
+  // Visible channels (hidden and locked categories excluded) with normalised names. Only the
+  // settings that change which channels are visible recompute it (not, say, the commentary choice).
+  const { hiddenCategories, pin, lockedCategories, autoLockAdult } = settings;
+  const channels = useMemo<IndexedChannel[]>(() => {
     if (!catalog || !index) return [];
-    const hidden = new Set(settings.hiddenCategories);
+    const hidden = new Set(hiddenCategories);
+    const lock = { ...settings, hiddenCategories, pin, lockedCategories, autoLockAdult };
     return catalog.channels
-      .filter((ch) => !hidden.has(ch.categoryId) && (isUnlocked() || !isCategoryLocked(settings, ch.categoryId, index.categoryById.get(ch.categoryId)?.name ?? '')))
-      .map((ch) => ({ ch, name: normalize(ch.name) }));
-  }, [catalog, index, settings]);
+      .filter((ch) => !hidden.has(ch.categoryId) && (isUnlocked() || !isCategoryLocked(lock, ch.categoryId, index.categoryById.get(ch.categoryId)?.name ?? '')))
+      .map((ch) => ({ ch, name: normalize(ch.name), base: channelTags(ch).base }));
+  }, [catalog, index, hiddenCategories, pin, lockedCategories, autoLockAdult]); // eslint-disable-line react-hooks/exhaustive-deps
+  const channelIndex = useMemo(() => indexChannels(channels), [channels]);
 
   // Today's guide entries; text is normalised on demand.
   const guide = useMemo(() => {
@@ -193,64 +295,59 @@ export function useSportsToday(active = true): SportsToday {
     return { list, withGuide };
   }, [channels, epgVersion]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  const fixtures = useMemo<{ list: Fixture[]; source: 'feed' | 'guide' }>(() => {
+    if (feed.fixtures) return { list: feed.fixtures, source: 'feed' };
+    // Guide-only: one fixture per distinct match found in programme titles or event channel names.
+    const hint = competitionHint(settings.sportsLeagues);
+    const byKey = new Map<string, Fixture>();
+    const add = (f: Fixture | null) => {
+      if (!f) return;
+      const k = fixtureKey(f);
+      const prev = byKey.get(k);
+      if (!prev || f.start < prev.start) byKey.set(k, f);
+    };
+    for (const ip of guide.list) if (hint.test(ip.p.title)) add(detectGuideFixture(ip.p, settings.sportsLeagues));
+    const { from, to } = todayWindow();
+    return { list: [...byKey.values()].filter((f) => f.start >= from && f.start < to), source: 'guide' };
+  }, [feed.fixtures, guide, settings.sportsLeagues]);
+
+  // The heavy part: which channels show each match. Independent of the clock and of scores: it
+  // reruns when the fixtures themselves (teams, kick-off, broadcasters), the guide or the channels
+  // change, and works through the matches in slices so the remote stays responsive meanwhile.
+  const fixtureSig = useMemo(() => fixtures.list.map((f) => `${f.id}|${f.start}|${f.home.name}|${f.away.name}|${f.broadcasts.join(',')}`).join(';'), [fixtures]);
+  const [matched, setMatched] = useState<{ sig: string; byId: Map<string, MatchedFixture> }>({ sig: '', byId: new Map() });
+  const { feedLanguages, feedMaxQuality, followedTeams } = settings;
+  useEffect(() => {
+    const list = fixtures.list;
+    const byId = new Map<string, MatchedFixture>();
+    let i = 0;
+    let timer = 0;
+    const step = () => {
+      const t0 = performance.now();
+      while (i < list.length && performance.now() - t0 < 12) {
+        const [m] = matchFixtures([list[i++]], channelIndex, guide.list);
+        byId.set(m.fixture.id, m);
+      }
+      if (i < list.length) timer = window.setTimeout(step, 0);
+      else setMatched({ sig: fixtureSig, byId });
+    };
+    timer = window.setTimeout(step, 0);
+    return () => window.clearTimeout(timer);
+  }, [fixtureSig, channelIndex, guide]); // eslint-disable-line react-hooks/exhaustive-deps
+  const matching = matched.sig !== fixtureSig;
+
+  // Every minute only the live / finished state and the order change: cheap.
   const result = useMemo(() => {
-    const source: 'feed' | 'guide' = feed.fixtures ? 'feed' : 'guide';
-    let fixtures: Fixture[];
-    if (feed.fixtures) {
-      fixtures = feed.fixtures;
-    } else {
-      // Guide-only: one fixture per distinct match found in programme titles or event channel names.
-      const hint = competitionHint(settings.sportsLeagues);
-      const byKey = new Map<string, Fixture>();
-      const add = (f: Fixture | null) => {
-        if (!f) return;
-        const k = fixtureKey(f);
-        const prev = byKey.get(k);
-        if (!prev || f.start < prev.start) byKey.set(k, f);
-      };
-      for (const ip of guide.list) if (hint.test(ip.p.title)) add(detectGuideFixture(ip.p, settings.sportsLeagues));
-      const { from, to } = todayWindow();
-      fixtures = [...byKey.values()].filter((f) => f.start >= from && f.start < to);
-    }
-
-    const prefs = { languages: settings.feedLanguages, maxQuality: settings.feedMaxQuality };
-    const followed = settings.followedTeams.map((t) => followKeys(t.name));
-    const tier = (score: number) => (score >= 1 ? 0 : score >= 0.6 ? 1 : 2);
-    const matches: SportsMatch[] = fixtures.map((f) => {
-      const pf = prepareFixture(f);
-      const best = new Map<string, MatchChannel>();
-      const offer = (m: MatchChannel) => {
-        if (m.tags.event === 'idle') return; // "- NO EVENT STREAMING -" placeholder slots
-        const prev = best.get(m.channel.id);
-        if (!prev || m.score > prev.score) best.set(m.channel.id, m);
-      };
-      // 1. TV guide: only entries overlapping the match window are normalised and scored.
-      const lo = f.start - 15 * 60_000;
-      const hi = f.start + 115 * 60_000;
-      for (const ip of guide.list) {
-        if (ip.p.end <= lo || ip.p.start >= hi) continue;
-        const score = scorePrepared(textOf(ip), ip.p.start, ip.p.end, pf, titleOf(ip));
-        if (score) offer({ channel: ip.channel, score, programme: ip.p, via: 'guide', tags: channelTags(ip.channel) });
-      }
-      // 2. Event / PPV channels named after the match.
-      for (const { ch, name } of channels) if (channelNameScore(name, pf)) offer({ channel: ch, score: 1, via: 'channel', tags: channelTags(ch) });
-      // 3. Channels named after a listed broadcaster ("TNT Sports 1") are weaker hints.
-      if (f.broadcasts.length) {
-        let added = 0;
-        for (const { ch } of channels) {
-          if (added >= 6 || best.has(ch.id)) continue;
-          if (broadcasterScore(ch.name, f)) {
-            offer({ channel: ch, score: 0.35, via: 'broadcaster', tags: channelTags(ch) });
-            added++;
-          }
-        }
-      }
-      // Event channels whose name says the event is over go last.
-      const ranked = [...best.values()].map((c) => ({ c, e: c.tags.event === 'ended' ? 1 : 0, t: tier(c.score), r: feedRank(c.tags, prefs) }));
-      ranked.sort((a, b) => a.e - b.e || a.t - b.t || compareRank(a.r, b.r) || a.c.channel.num - b.c.channel.num);
-      return { fixture: f, state: stateAt(f, now), channels: diversify(ranked.map((x) => x.c)), followed: isFollowed(f.home, followed) || isFollowed(f.away, followed) };
+    // Until the first matching is done there's nothing to show (not "no channels" for every match).
+    if (matching && !matched.byId.size) return { matches: [] as SportsMatch[], channels: [] as Channel[], source: fixtures.source };
+    // The latest fixture objects (scores, minute) with the channels found for them.
+    // Ranking by your language and quality, and your teams, apply at once when you change them.
+    const prefs = { languages: feedLanguages, maxQuality: feedMaxQuality };
+    const followed = followedTeams.map((t) => followKeys(t.name));
+    const matches: SportsMatch[] = fixtures.list.map((f) => {
+      const m = matched.byId.get(f.id);
+      return { fixture: f, state: stateAt(f, now), channels: m ? rankFeeds(m.found, prefs) : [], followed: isFollowed(f.home, followed) || isFollowed(f.away, followed) };
     });
-
     const order = { in: 0, pre: 1, post: 2 } as const;
     matches.sort((a, b) => order[a.state] - order[b.state] || a.fixture.start - b.fixture.start);
 
@@ -264,12 +361,12 @@ export function useSportsToday(active = true): SportsToday {
         zap.push(c.channel);
       }
     }
-    return { matches, channels: zap, source };
-  }, [feed.fixtures, guide, channels, settings.sportsLeagues, settings.feedLanguages, settings.feedMaxQuality, settings.followedTeams, now]);
+    return { matches, channels: zap, source: fixtures.source };
+  }, [matched, matching, fixtures, now, feedLanguages, feedMaxQuality, followedTeams]);
 
   return {
     ...result,
-    loading: feed.loading,
+    loading: feed.loading || matching,
     feedError: online ? feed.error : null,
     diagnostics: {
       feed: !online ? 'off' : feed.fixtures ? 'ok' : 'error',
