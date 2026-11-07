@@ -171,7 +171,7 @@ function column(el: Element): HTMLElement | null {
  * Left/Right: the area of the nearest thing that way (the next column), so the channel list beside
  * the categories wins over a button that happens to be level with you further across.
  */
-function nearestArea(from: HTMLElement, dir: Dir, list: HTMLElement[]): HTMLElement[] {
+function nearestArea(from: HTMLElement, dir: Dir, list: HTMLElement[]): { list: HTMLElement[]; staying: boolean } {
   const f = from.getBoundingClientRect();
   let best: HTMLElement | null = null;
   let bestAlong = Infinity;
@@ -185,9 +185,15 @@ function nearestArea(from: HTMLElement, dir: Dir, list: HTMLElement[]): HTMLElem
       best = el;
     }
   }
-  if (!best) return list;
-  const area = groupsOf(best).find((g) => !g.contains(from));
-  return area ? list.filter((el) => area.contains(el)) : list;
+  // Only columns count as areas here: a row above that starts a little further left (home rows)
+  // must not pull Right out of your own row.
+  const area = best && groupsOf(best).find((g) => !g.contains(from));
+  if (area && area.dataset.navGroup === 'column') return { list: list.filter((el) => area.contains(el)), staying: false };
+  // In a column with no next column that way, Left/Right only move along the line you're on: no
+  // diagonal jump to a button further down, nor out to the top bar.
+  const col = column(from);
+  if (col) return { list: list.filter((el) => col.contains(el)), staying: true };
+  return { list, staying: false };
 }
 
 /** The nearest ancestor that scrolls along the axis of `dir`. */
@@ -240,10 +246,42 @@ export function focusFirstContent(): boolean {
   return true;
 }
 
+/** The nearest ancestor that clips its content (a scrolling row or list), cached per element. */
+const clipperCache = new WeakMap<Element, HTMLElement | null>();
+function clipper(el: HTMLElement): HTMLElement | null {
+  if (clipperCache.has(el)) return clipperCache.get(el)!;
+  let found: HTMLElement | null = null;
+  for (let p = el.parentElement; p && p !== document.body; p = p.parentElement) {
+    const st = getComputedStyle(p);
+    if (/(auto|scroll|hidden)/.test(st.overflowX + st.overflowY)) {
+      found = p;
+      break;
+    }
+  }
+  clipperCache.set(el, found);
+  return found;
+}
+
+/**
+ * Scrolled out of view inside a row or list you're not in (quick actions scrolled sideways sit
+ * "left" of the page): not a place to go. Items of your own list stay, so it can scroll on.
+ */
+function hiddenElsewhere(el: HTMLElement, from: HTMLElement): boolean {
+  const r = el.getBoundingClientRect();
+  // Every clipping container up to the one you're in too (a row, then the page scrolled past it).
+  for (let c = clipper(el); c && !c.contains(from); c = clipper(c)) {
+    const b = c.getBoundingClientRect();
+    if (r.right <= b.left + 1 || r.left >= b.right - 1 || r.bottom <= b.top + 1 || r.top >= b.bottom - 1) return true;
+  }
+  return false;
+}
+
 function move(from: HTMLElement, dir: Dir, retry = 0, within?: HTMLElement): boolean {
   // After scrolling a list for more items, only that list's items count: everything else moved
   // relative to it (the sidebar would suddenly look "below").
-  const all = (within ? candidates().filter((el) => within.contains(el)) : candidates()).filter((el) => el !== from && !el.contains(from) && !from.contains(el));
+  const all = (within ? candidates().filter((el) => within.contains(el)) : candidates()).filter(
+    (el) => el !== from && !el.contains(from) && !from.contains(el) && !hiddenElsewhere(el, from),
+  );
   const pick = (list: HTMLElement[], inLineOnly = false) =>
     nextInDirection(from.getBoundingClientRect(), dir, list.map((el) => ({ el, r: el.getBoundingClientRect(), minor: el.hasAttribute('data-nav-minor') })), inLineOnly);
   let next: HTMLElement | null;
@@ -259,12 +297,23 @@ function move(from: HTMLElement, dir: Dir, retry = 0, within?: HTMLElement): boo
     const inList = sc && sc !== document.scrollingElement ? pick(inRegion.filter((el) => sc.contains(el))) : null;
     next = inList ?? pick(inRegion) ?? (region ? pick(all.filter((el) => !groupOf(el))) : null);
   } else {
+    // Crossing into the next column may land at an angle; within a column, along the line only.
     const area = nearestArea(from, dir, all);
-    // Within a column, Left/Right only move along the line you're on (no diagonal jump to a button
-    // above); crossing into the next column may land at an angle.
-    const col = column(from);
-    const staying = !!col && area.every((el) => col.contains(el));
-    next = pick(area, staying);
+    next = pick(area.list, area.staying);
+    // Nothing along your line in this column (a match's channel, its team's star off to the side):
+    // the next column that way.
+    if (!next && area.staying) {
+      const own = column(from);
+      const f = from.getBoundingClientRect();
+      const beyond = all.filter((el) => {
+        const c = column(el);
+        if (!c || c === own) return false;
+        const r = el.getBoundingClientRect();
+        return dir === 'right' ? r.left >= f.right - 1 : r.right <= f.left + 1;
+      });
+      const nearest = nearestArea(from, dir, beyond);
+      next = pick(nearest.list);
+    }
   }
   if (next) {
     focus(entryPoint(next, from), dir);

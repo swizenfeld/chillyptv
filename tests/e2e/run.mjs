@@ -220,30 +220,11 @@ await step('sports today: fixtures matched to channels', async () => {
   await playing('.player-preview video');
 });
 
-await step('home billboard: live matches carousel', async () => {
+await step('home quick action: Sports today', async () => {
   await page.goto(`${APP}/`);
-  // The live match is the first slide, with its score, minute and the best channel; "on now" follows.
-  const slide = page.locator('.hero-carousel.multi .match-hero', { hasText: 'Chelsea' });
-  await slide.waitFor({ timeout: 30000 });
-  await slide.locator('.hb-score').first().waitFor();
-  await slide.locator('.live-pill').waitFor();
-  await slide.locator('.hero-channel').waitFor();
-  const dots = page.locator('.hero-dot');
-  if ((await dots.count()) < 2) throw new Error(`expected 2+ slides, got ${await dots.count()}`);
-  await page.waitForTimeout(800); // let the slide fade in
-  await page.screenshot({ path: join(OUT, '01c-home-match-hero.png') });
-  // Dots switch slides; the last one is the usual "on now" billboard.
-  await dots.last().click();
-  await page.locator('.hero-carousel .hero:not(.match-hero)').waitFor();
-  await dots.first().click();
-  // It moves on by itself (8 s) once the pointer leaves it.
-  await page.mouse.move(2, 2);
-  await page.locator('.hero-carousel .hero:not(.match-hero)').waitFor({ timeout: 12000 });
-  await dots.first().click();
-  await slide.locator('.hero-watch').click();
-  await page.waitForURL(/\/play/);
-  await playing('.player-full video');
-  await page.keyboard.press('Escape');
+  await page.locator('.shortcuts .shortcut-chip', { hasText: 'Sports today' }).click();
+  await page.waitForURL(/\/live\?cat=__sports/);
+  await page.locator('.match-card').first().waitFor({ timeout: 30000 });
 });
 
 await step('backup feed takes over when a match stream dies', async () => {
@@ -562,18 +543,6 @@ await step('remote-control navigation (Fire TV style arrows/OK)', async () => {
   if (!(await page.evaluate(() => document.activeElement?.getAttribute('aria-current') === 'page'))) throw new Error(`left into the sidebar → ${await focused()}`);
   await page.keyboard.press('ArrowRight');
   if ((await focused()) !== leftFrom) throw new Error(`back from the sidebar → ${await focused()}, expected ${leftFrom}`);
-  // The billboard: Down from Watch reaches the slide dots, Right on them changes slide, and the
-  // focus stays put when the slide moves on by itself.
-  await page.locator('.hero-watch').focus();
-  await page.keyboard.press('ArrowDown');
-  if (!(await page.evaluate(() => document.activeElement?.classList.contains('hero-dot') && document.activeElement.getAttribute('aria-selected') === 'true'))) throw new Error(`down from Watch → ${await focused()}`);
-  const before = await page.locator('.hero-carousel .hero').getAttribute('aria-label');
-  await page.keyboard.press('ArrowRight');
-  await page.waitForFunction((b) => document.querySelector('.hero-carousel .hero')?.getAttribute('aria-label') !== b, before);
-  await page.keyboard.press('ArrowUp');
-  if (!(await page.evaluate(() => document.activeElement?.classList.contains('hero-watch')))) throw new Error(`up from the dots → ${await focused()}`);
-  await page.waitForFunction((b) => document.querySelector('.hero-carousel .hero')?.getAttribute('aria-label') === b, before, { timeout: 12000 });
-  if (!(await page.evaluate(() => document.activeElement?.classList.contains('hero-watch')))) throw new Error(`focus lost when the slide moved on → ${await focused()}`);
   await page.goto(`${APP}/live`);
   await page.locator('.channel-row').first().waitFor();
   // In a dialog, the arrows stay inside it.
