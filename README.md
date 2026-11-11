@@ -65,6 +65,8 @@ npm run mock            # optional fake provider on :8788 (user demo / pass demo
 
 The mock provider generates real test streams with ffmpeg: about 230 live channels (HLS and TS), movies (MP4 and an MKV with AC3 audio), series, XMLTV, catch-up and an M3U export. You can develop and test without a real subscription.
 
+`MOCK_SCALE=1 npm run mock` grows it to a big provider's size (15,000 channels in 250 categories, 20,000 films, 4,000 series) for checking how the app copes, e.g. in Chromium with the CPU throttled to a Fire TV stick's speed.
+
 ## Fire TV / Android app
 
 The same app runs on Fire TV sticks (Fire OS) and Android TV boxes **without the ChillyPTV server**.

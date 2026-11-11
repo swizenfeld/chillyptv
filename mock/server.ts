@@ -182,7 +182,7 @@ const MUSIC_CAT = LIVE_CATS.indexOf('Music') + 1;
 for (const c of live) if (c.cat === MUSIC_CAT) c.epgId = '';
 // Event slots have no guide entry, as on real providers: the event is only in the channel name.
 const EVENT_SLOT_IDS = new Set(sportsChannels.slice(14, 18).map((c) => c.id));
-const hasProviderGuide = (c: LiveCh) => c.cat !== MUSIC_CAT && !EVENT_SLOT_IDS.has(c.id);
+const hasProviderGuide = (c: LiveCh) => c.cat !== MUSIC_CAT && !EVENT_SLOT_IDS.has(c.id) && (c.cat < 1000 || FILL_GUIDE.has(c.id));
 const fixtureStart = (f: MockFixture) => SPORTS_ANCHOR + f.offsetMin * 60_000;
 
 const movies = Array.from({ length: 60 }, (_, i) => ({
@@ -205,6 +205,38 @@ const series = Array.from({ length: 18 }, (_, i) => ({
   seasons: 1 + (i % 3),
   eps: 4 + (i % 4),
 }));
+
+// ------------------------------------------------------------- scale mode ---
+// MOCK_SCALE=1 grows the catalogue to a big provider's size (15,000 channels in 250 categories,
+// 20,000 films, 4,000 series), for measuring how the app copes. Off by default.
+const SCALE = process.env.MOCK_SCALE === '1';
+const FILL_LIVE_CATS: string[] = [];
+const FILL_VOD_CATS: string[] = [];
+const FILL_SERIES_CATS: string[] = [];
+const FILL_GUIDE = new Set<number>();
+if (SCALE) {
+  const r = rand(7);
+  const PFX = ['US|', 'UK:', 'LAT|', 'AR|', 'MX|', 'CA|', 'ES:', 'IT|', 'DE|', 'FR|', 'BR|', 'PT|'];
+  const NETS = ['ESPN', 'Fox Sports', 'TNT Sports', 'Sky Sports', 'DAZN', 'beIN Sports', 'NBC', 'CBS', 'ABC', 'Discovery', 'HBO', 'Cinemax', 'TyC Sports', 'Movistar', 'Canal', 'CNN', 'Nick', 'Paramount', 'Telemundo', 'History'];
+  for (let i = 0; i < 250; i++) FILL_LIVE_CATS.push(`${PFX[i % PFX.length]} ${['SPORTS', 'NEWS', 'MOVIES', 'KIDS', 'LOCAL', 'ENTERTAINMENT', 'DOCS', 'MUSIC'][i % 8]} ${Math.floor(i / 12) + 1}`);
+  for (let i = 0; i < 150; i++) FILL_VOD_CATS.push(`${PFX[i % PFX.length]} ${['ACTION', 'COMEDY', 'DRAMA', 'HORROR', 'KIDS', '4K', 'NEW'][i % 7]} ${Math.floor(i / 12) + 1}`);
+  for (let i = 0; i < 60; i++) FILL_SERIES_CATS.push(`${PFX[i % PFX.length]} SERIES ${i + 1}`);
+  let id = 100_000;
+  for (let i = 0; i < 15_000; i++, id++) {
+    const ci = Math.floor(r() * 250);
+    const name = `${FILL_LIVE_CATS[ci].split(' ')[0]} ${NETS[i % NETS.length]} ${1 + (i % 9)}${r() > 0.5 ? ' HD' : ' FHD'}`;
+    const guided = i % 10 === 0; // a tenth have the provider's guide (big guides cover a fraction)
+    live.push({ id, name, cat: 1000 + ci, src: SOURCES[id % 3].key, archive: r() > 0.9, epgId: guided ? `fill${id}.mock` : '' });
+    if (guided) FILL_GUIDE.add(id);
+  }
+  for (let i = 0; i < 20_000; i++) {
+    movies.push({ id: 200_000 + i, name: `${WORDS[i % WORDS.length]} ${['Protocol', 'Odyssey', 'Heist', 'Garden', 'Signal', 'Run', 'Code', 'Night'][i % 8]} ${i} (${1990 + (i % 35)})`,
+      cat: 1000 + (i % 150), ext: 'mp4', rating: ((i * 37) % 50) / 10 + 5, added: Math.floor(Date.now() / 1000) - i * 600 });
+  }
+  for (let i = 0; i < 4_000; i++) {
+    series.push({ id: 300_000 + i, name: `${WORDS[(i + 5) % WORDS.length]} ${['Detectives', 'Family', 'Academy', 'Chronicles', 'Street', 'Hospital'][i % 6]} ${i}`, cat: 1000 + (i % 60), seasons: 1, eps: 4 });
+  }
+}
 
 function epgFor(ch: LiveCh, from: number, to: number) {
   const slot = 30 * 60_000;
@@ -333,11 +365,11 @@ function handleApi(req: IncomingMessage, res: ServerResponse, q: URLSearchParams
           timezone: 'UTC', timestamp_now: Math.floor(now / 1000), time_now: fmtLocal(now) },
       });
     case 'get_live_categories':
-      return json(res, LIVE_CATS.map((name, i) => ({ category_id: String(i + 1), category_name: name, parent_id: 0 })));
+      return json(res, [...LIVE_CATS.map((name, i) => ({ category_id: String(i + 1), category_name: name, parent_id: 0 })), ...FILL_LIVE_CATS.map((name, i) => ({ category_id: String(1000 + i), category_name: name, parent_id: 0 }))]);
     case 'get_vod_categories':
-      return json(res, VOD_CATS.map((name, i) => ({ category_id: String(i + 101), category_name: name, parent_id: 0 })));
+      return json(res, [...VOD_CATS.map((name, i) => ({ category_id: String(i + 101), category_name: name, parent_id: 0 })), ...FILL_VOD_CATS.map((name, i) => ({ category_id: String(1100 + i), category_name: name, parent_id: 0 }))]);
     case 'get_series_categories':
-      return json(res, SERIES_CATS.map((name, i) => ({ category_id: String(i + 201), category_name: name, parent_id: 0 })));
+      return json(res, [...SERIES_CATS.map((name, i) => ({ category_id: String(i + 201), category_name: name, parent_id: 0 })), ...FILL_SERIES_CATS.map((name, i) => ({ category_id: String(1200 + i), category_name: name, parent_id: 0 }))]);
     case 'get_live_streams':
       return json(res, live.filter((c) => !catId || String(c.cat) === catId).map((c, i) => ({
         num: i + 1, name: c.name, stream_type: 'live', stream_id: c.id, stream_icon: `${base(req)}/logo/${c.id}.svg`, epg_channel_id: c.epgId,
@@ -471,7 +503,7 @@ function xmltv(_req: IncomingMessage, res: ServerResponse) {
   for (const c of live) if (hasProviderGuide(c)) out.push(`<channel id="${c.epgId}"><display-name>${escXml(c.name)}</display-name></channel>`);
   for (const c of live) {
     if (!hasProviderGuide(c)) continue;
-    for (const p of epgFor(c, now - 3 * 86400_000, now + 2 * 86400_000)) {
+    for (const p of epgFor(c, c.cat >= 1000 ? now - 6 * 3600_000 : now - 3 * 86400_000, c.cat >= 1000 ? now + 18 * 3600_000 : now + 2 * 86400_000)) {
       out.push(`<programme start="${xmltvDate(p.start)}" stop="${xmltvDate(p.end)}" channel="${c.epgId}"><title lang="en">${escXml(p.title)}</title><desc lang="en">${escXml(p.desc)}</desc><category>Mock</category></programme>`);
     }
   }

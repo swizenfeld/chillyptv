@@ -3951,27 +3951,18 @@ textarea.input {
 .tv-mode .wide-card:focus-visible .wide-img,
 .tv-mode .live-card:focus-visible .live-card-art {
   transform: translateY(-4px) scale(1.1);
+  /* tight shadows: a wide blur is costly to paint on every press */
   box-shadow:
-    0 0 0 1px rgba(255, 255, 255, 0.4),
-    0 0 26px rgba(255, 255, 255, 0.16),
-    0 24px 40px -12px rgba(0, 0, 0, 0.9);
+    0 0 0 2px rgba(255, 255, 255, 0.55),
+    0 14px 22px -10px rgba(0, 0, 0, 0.9);
 }
 .tv-mode .poster-btn:focus-visible .poster-img::after,
 .tv-mode .wide-card:focus-visible .wide-img::after,
 .tv-mode .live-card:focus-visible .live-card-art::after {
   box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.35);
 }
-/* The rest of the row steps back (plain transparency: a filter would repaint every poster). */
-.tv-mode .h-scroll:focus-within .poster-img,
-.tv-mode .h-scroll:focus-within .wide-img,
-.tv-mode .h-scroll:focus-within .live-card-art {
-  opacity: 0.6;
-}
-.tv-mode .h-scroll:focus-within .poster-btn:focus-visible .poster-img,
-.tv-mode .h-scroll:focus-within .wide-card:focus-visible .wide-img,
-.tv-mode .h-scroll:focus-within .live-card:focus-visible .live-card-art {
-  opacity: 1;
-}
+/* (The rest of the row isn't dimmed: restyling and repainting every tile on each press costs a
+   Fire TV stick more than it adds; the lifted tile reads clearly on its own.) */
 .tv-mode .h-scroll {
   padding: 14px 14px 14px;
   margin: -14px -14px -4px;

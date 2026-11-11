@@ -299,6 +299,55 @@ export function programmesFor(ch: Channel | undefined): Programme[] {
   return list;
 }
 
+/**
+ * A channel's listings overlapping [from, to), read straight from the guide data: today's matches
+ * need a day of listings, not every guided channel's whole guide turned into objects.
+ */
+export function programmesBetween(ch: Channel, from: number, to: number): Programme[] {
+  const within = (list: Programme[]) => list.filter((p) => p.end > from && p.start < to);
+  const data = useEpg.getState().data;
+  if (!data || !resolver) return within(eventProgrammes(ch));
+  const cached = resolvedCache.get(ch.id);
+  if (cached?.ch === ch) return within(cached.list);
+  const key = resolveGuideKey(ch);
+  const tuples = key ? data.programmes[key] : undefined;
+  if (!tuples?.length) return within(eventProgrammes(ch));
+  const shift = useSettings.getState().epgShiftHours * 3_600_000;
+  const out: Programme[] = [];
+  for (const t of tuples) if (t[1] + shift > from && t[0] + shift < to) out.push(toProgramme(t, shift));
+  return out;
+}
+
+/**
+ * Listings for an event channel (its name gives the event), else nothing: what the Events list
+ * needs, without loading every channel's guide (programmesFor on 15,000 channels is slow).
+ */
+export function eventProgrammesFor(ch: Channel): Programme[] {
+  const ev = eventProgrammes(ch);
+  return ev.length ? programmesFor(ch) : ev;
+}
+
+/**
+ * Prepares each channel's guide link, tags and event listing a little at a time while the app is
+ * idle, so the first visit to Live TV or Sports today doesn't stall doing it for 15,000 channels.
+ * Returns a cancel function.
+ */
+export function warmChannels(channels: Channel[]): () => void {
+  let i = 0;
+  let timer = 0;
+  const step = () => {
+    const t0 = performance.now();
+    while (i < channels.length && performance.now() - t0 < 8) {
+      const ch = channels[i++];
+      resolveGuideKey(ch);
+      eventProgrammes(ch);
+    }
+    if (i < channels.length) timer = window.setTimeout(step, 16);
+  };
+  timer = window.setTimeout(step, 1500);
+  return () => window.clearTimeout(timer);
+}
+
 /** Guide channels with listings, for the manual "Fix guide" picker. */
 export function guideChannelHasListings(id: string): boolean {
   const data = useEpg.getState().data;

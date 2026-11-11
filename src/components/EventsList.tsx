@@ -3,7 +3,7 @@ import { CalendarClock, ChevronDown } from 'lucide-react';
 import { Empty, Img } from './ui';
 import { FeedBadges } from '../pages/PlayerPage';
 import { feedName } from '../lib/channelTags';
-import { formatClock } from '../lib/format';
+import { formatClock, formatShortDay } from '../lib/format';
 import { quickFilter } from '../lib/search';
 import { useSettings } from '../store/settings';
 import { SPORTS, type Sport, type SportEvent } from '../lib/events';
@@ -100,7 +100,7 @@ function EventCard({ e, now, selectedId, onSelect, onOpen, withDay }: {
   const [all, setAll] = useState(false);
   const live = e.start <= now && e.end > now;
   const [title, competition] = e.title.split(' · ');
-  const day = withDay ? `${new Date(e.start).toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short' })} ` : '';
+  const day = withDay ? `${formatShortDay(e.start)} ` : '';
   const shown = all ? e.feeds : e.feeds.slice(0, 3);
   return (
     <article className={`match-card event-card ${live ? 'state-in' : 'state-pre'}`}>

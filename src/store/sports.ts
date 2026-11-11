@@ -4,7 +4,7 @@ import { isNativeApp } from '../native/player';
 import { collectFixtures } from '../../shared/fixtures';
 import { normalize } from '../lib/search';
 import { useCatalog } from './catalog';
-import { programmesFor, useEpg } from './epg';
+import { programmesBetween, useEpg } from './epg';
 import { isCategoryLocked, isUnlocked, useSettings } from './settings';
 import {
   broadcasterNames, channelNameScore, competitionHint, detectGuideFixture, fixtureKey, followKeys, isFollowed, prepareFixture, scorePrepared, stateAt, type Fixture,
@@ -285,8 +285,7 @@ export function useSportsToday(active = true): SportsToday {
     let withGuide = 0;
     for (const { ch } of channels) {
       let any = false;
-      for (const p of programmesFor(ch)) {
-        if (p.end <= from - 3 * 3_600_000 || p.start >= to) continue;
+      for (const p of programmesBetween(ch, from - 3 * 3_600_000, to)) {
         list.push({ channel: ch, p });
         any = true;
       }
@@ -297,6 +296,9 @@ export function useSportsToday(active = true): SportsToday {
 
   const fixtures = useMemo<{ list: Fixture[]; source: 'feed' | 'guide' }>(() => {
     if (feed.fixtures) return { list: feed.fixtures, source: 'feed' };
+    // The online fixtures are on their way: don't detect matches from guide titles only to drop
+    // them a moment later.
+    if (online && !feed.error) return { list: [], source: 'feed' };
     // Guide-only: one fixture per distinct match found in programme titles or event channel names.
     const hint = competitionHint(settings.sportsLeagues);
     const byKey = new Map<string, Fixture>();
@@ -309,7 +311,7 @@ export function useSportsToday(active = true): SportsToday {
     for (const ip of guide.list) if (hint.test(ip.p.title)) add(detectGuideFixture(ip.p, settings.sportsLeagues));
     const { from, to } = todayWindow();
     return { list: [...byKey.values()].filter((f) => f.start >= from && f.start < to), source: 'guide' };
-  }, [feed.fixtures, guide, settings.sportsLeagues]);
+  }, [feed.fixtures, feed.loading, feed.error, online, guide, settings.sportsLeagues]);
 
   // The heavy part: which channels show each match. Independent of the clock and of scores: it
   // reruns when the fixtures themselves (teams, kick-off, broadcasters), the guide or the channels

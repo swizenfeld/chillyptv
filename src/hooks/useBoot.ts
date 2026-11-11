@@ -7,7 +7,7 @@ import { checkBackend, setNetworkConfig } from '../lib/api';
 import { useSettings } from '../store/settings';
 import { getActiveProfile, useActiveProfile } from '../store/profiles';
 import { useCatalog } from '../store/catalog';
-import { useEpg } from '../store/epg';
+import { useEpg, warmChannels } from '../store/epg';
 import { useLibrary } from '../store/library';
 import { toast } from '../store/toast';
 import { usePlayer } from '../store/player';
@@ -72,6 +72,14 @@ export function useBoot(): boolean {
       void resumed?.then((h) => h.remove());
     };
   }, [ready, profile, catalog, loadEpg]);
+
+  // Once the guide is in, link channels to it in the background (idle slices), so Live TV and
+  // Sports today open without doing it for every channel first.
+  const guideData = useEpg((s) => s.data);
+  useEffect(() => {
+    if (!catalog || !guideData) return;
+    return warmChannels(catalog.channels);
+  }, [catalog, guideData]);
 
   useEffect(() => {
     if (!ready || !syncEnabled) return;

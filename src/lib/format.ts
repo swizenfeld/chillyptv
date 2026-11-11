@@ -23,18 +23,36 @@ export function formatMinutes(totalSec: number): string {
   return `${Math.floor(m / 60)}h ${pad2(m % 60)}m`;
 }
 
+// Formatters are built once: creating one per call (toLocaleDateString) is slow on a Fire TV stick,
+// and guide lists format dozens of dates per render.
+let dateFmt: Intl.DateTimeFormat | null = null;
+let dayFmt: Intl.DateTimeFormat | null = null;
+
 export function formatDate(ms: number): string {
-  return new Date(ms).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+  dateFmt ??= new Intl.DateTimeFormat(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+  return dateFmt.format(ms);
+}
+
+/** "Sat 7 Nov". */
+export function formatShortDay(ms: number): string {
+  dayFmt ??= new Intl.DateTimeFormat(undefined, { weekday: 'short', day: 'numeric', month: 'short' });
+  return dayFmt.format(ms);
+}
+
+/** Local midnight of the day `ms` falls on. */
+function dayStart(ms: number): number {
+  const d = new Date(ms);
+  d.setHours(0, 0, 0, 0);
+  return d.getTime();
 }
 
 export function formatDay(ms: number): string {
-  const d = new Date(ms);
-  const today = new Date();
-  const diff = Math.round((new Date(d.toDateString()).getTime() - new Date(today.toDateString()).getTime()) / 86_400_000);
+  const diff = Math.round((dayStart(ms) - dayStart(Date.now())) / 86_400_000);
   if (diff === 0) return 'Today';
   if (diff === -1) return 'Yesterday';
   if (diff === 1) return 'Tomorrow';
-  return d.toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short' });
+  dayFmt ??= new Intl.DateTimeFormat(undefined, { weekday: 'short', day: 'numeric', month: 'short' });
+  return dayFmt.format(ms);
 }
 
 export function formatBytes(n: number): string {

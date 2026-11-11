@@ -32,11 +32,18 @@ export function Shell() {
   const location = useLocation();
   // With remote navigation, a new page starts on its content (not the sidebar), like TV apps do.
   useEffect(() => {
+    // A new page starts on its content once it has rendered (retried briefly while it loads), but
+    // never after you've pressed a key: then you're already moving and focus stays yours.
     let tries = 0;
+    const stop = () => {
+      window.clearInterval(t);
+      document.removeEventListener('keydown', stop, true);
+    };
     const t = window.setInterval(() => {
-      if (focusFirstContent() || ++tries > 10) window.clearInterval(t);
+      if (focusFirstContent() || ++tries > 10) stop();
     }, 120);
-    return () => window.clearInterval(t);
+    document.addEventListener('keydown', stop, true);
+    return stop;
   }, [location.pathname]);
   const { refreshing, error, account, status } = useCatalog();
   const epgStatus = useEpg((s) => s.status);

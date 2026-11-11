@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
+import { memo, useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { ChevronLeft, ChevronRight, Heart, Lock, Play, Star } from 'lucide-react';
 import { Img, ProgressBar } from './ui';
@@ -71,7 +71,7 @@ export function Row({ title, action, seeAll, children }: { title: ReactNode; act
   );
 }
 
-export function PosterCard({ title, image, subtitle, rating, progress, onClick, favorite, onFavorite, locked }: {
+interface PosterCardProps {
   title: string;
   image?: string;
   subtitle?: ReactNode;
@@ -81,7 +81,22 @@ export function PosterCard({ title, image, subtitle, rating, progress, onClick, 
   favorite?: boolean;
   onFavorite?: () => void;
   locked?: boolean;
-}) {
+}
+
+/**
+ * A poster tile. Grids of thousands re-render as they scroll; the tile itself only redraws when
+ * what it shows changes. Its handlers always run the latest ones passed in (kept in a ref), so a
+ * skipped redraw never leaves an old handler behind.
+ */
+export function PosterCard(props: PosterCardProps) {
+  const latest = useRef(props);
+  latest.current = props;
+  const onClick = useCallback(() => latest.current.onClick(), []);
+  const onFavorite = useCallback(() => latest.current.onFavorite?.(), []);
+  return <PosterTile {...props} onClick={onClick} onFavorite={props.onFavorite ? onFavorite : undefined} />;
+}
+
+const PosterTile = memo(function PosterTile({ title, image, subtitle, rating, progress, onClick, favorite, onFavorite, locked }: PosterCardProps) {
   return (
     <div className="poster-card">
       <button className="poster-btn" onClick={onClick} title={title}>
@@ -107,7 +122,7 @@ export function PosterCard({ title, image, subtitle, rating, progress, onClick, 
       )}
     </div>
   );
-}
+});
 
 export function WideCard({ title, image, subtitle, progress, onClick, badge }: { title: string; image?: string; subtitle?: ReactNode; progress?: number; onClick: () => void; badge?: ReactNode }) {
   return (

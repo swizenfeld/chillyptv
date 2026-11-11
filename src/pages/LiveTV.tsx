@@ -3,14 +3,14 @@ import { feedName } from '../lib/channelTags';
 import { EventsList } from '../components/EventsList';
 import { buildEvents } from '../lib/events';
 import { tidyView, versionLabel } from '../lib/tidy';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { memo, startTransition, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { Archive, Bell, BellRing, CalendarRange, Clock, Heart, LayoutGrid, List, Maximize2, Play, Search, Star, Trophy, Tv, Wrench } from 'lucide-react';
 import { useCatalog } from '../store/catalog';
 import { useActiveProfile } from '../store/profiles';
 import { useFavorites, useHistory, useLibrary } from '../store/library';
-import { nowNext, programmesFor, useChannelProgrammes, useEpg } from '../store/epg';
+import { eventProgrammesFor, nowNext, programmesFor, useChannelProgrammes, useEpg } from '../store/epg';
 import { useSettings, isCategoryLocked, isUnlocked } from '../store/settings';
 import { liveSession, usePlay } from '../hooks/usePlay';
 import { CategoryList } from '../components/CategoryList';
@@ -31,6 +31,12 @@ export function useVisibleChannels(cat: string, filter: string): Channel[] {
   const favs = useFavorites(profile?.id, 'live');
   const history = useHistory(profile?.id);
   const settings = useSettings();
+  // Favourites and history only matter to their own categories: watching something (which updates
+  // the history) must not refilter 15,000 channels for every other category.
+  const favDep = cat === '__fav' ? favs : null;
+  const historyDep = cat === '__recent' ? history : null;
+  const { hiddenCategories, channelSort, pin, lockedCategories, autoLockAdult } = settings;
+  const view = useMemo(() => (catalog ? tidyView(catalog, settings) : null), [catalog, settings]);
   return useMemo(() => {
     if (!catalog || !index) return [];
     let list: Channel[];
@@ -49,17 +55,14 @@ export function useVisibleChannels(cat: string, filter: string): Channel[] {
       });
     }
     // Favourites and history show exactly what was saved; everything else uses the tidy view.
-    if (cat !== '__fav' && cat !== '__recent') {
-      const view = tidyView(catalog, settings);
-      list = list.filter((c) => !view.hidden.has(c.id));
-    }
+    if (cat !== '__fav' && cat !== '__recent' && view) list = list.filter((c) => !view.hidden.has(c.id));
     list = quickFilter(list, filter, (c) => `${c.num} ${c.name}`);
     if (cat !== '__fav' && cat !== '__recent') {
       if (settings.channelSort === 'name') list = [...list].sort((a, b) => a.name.localeCompare(b.name));
       else if (settings.channelSort === 'number') list = [...list].sort((a, b) => a.num - b.num);
     }
     return list;
-  }, [catalog, index, cat, filter, favs, history, settings]);
+  }, [catalog, index, cat, filter, favDep, historyDep, view, hiddenCategories, channelSort, pin, lockedCategories, autoLockAdult]); // eslint-disable-line react-hooks/exhaustive-deps
 }
 
 export function LiveTVPage() {
@@ -77,7 +80,7 @@ export function LiveTVPage() {
   const minute = useNow(60_000);
   // Events of every sport, from event channels' own names. Recomputed each minute (live/soon move on).
   const events = useMemo(
-    () => (index ? buildEvents(allVisible, programmesFor, (c) => index.categoryById.get(c.categoryId)?.name ?? '', minute) : []),
+    () => (index ? buildEvents(allVisible, eventProgrammesFor, (c) => index.categoryById.get(c.categoryId)?.name ?? '', minute) : []),
     [allVisible, index, epgVer, minute], // eslint-disable-line react-hooks/exhaustive-deps
   );
   const eventChannels = useMemo(() => {
@@ -111,7 +114,8 @@ export function LiveTVPage() {
   const [shownId, setShownId] = useState<string | undefined>(selected?.id);
   useEffect(() => {
     if (selected?.id === shownId) return;
-    const t = window.setTimeout(() => setShownId(selected?.id), 220);
+    // Low priority: the next remote press interrupts drawing the panel instead of waiting for it.
+    const t = window.setTimeout(() => startTransition(() => setShownId(selected?.id)), 220);
     return () => window.clearTimeout(t);
   }, [selected?.id, shownId]);
   const shown = (shownId && shownId !== selected?.id && index?.channelById.get(shownId)) || selected;
@@ -140,16 +144,50 @@ export function LiveTVPage() {
 
   const previewSession = useMemo(() => (profile && shown && previewOn && !narrow ? liveSession(profile, shown) : null), [profile, shown, previewOn, narrow]);
 
-  if (status === 'loading' && !catalog) return <Spinner label="Loading channels…" />;
-  if (!catalog || !index || !profile) return null;
-
-  const zapIds = channels.map((c) => c.id);
+  // Everything below is kept between key presses: moving through the channel list re-renders the
+  // page, and with 15,000 channels any per-render pass over them is felt on a Fire TV stick.
+  const zapIds = useMemo(() => channels.map((c) => c.id), [channels]);
   const openFull = (ch: Channel) => {
     // A channel showing one of today's matches plays with the match's other feeds as backups.
     const m = isSports ? sports.matches.find((x) => x.channels.some((c) => c.channel.id === ch.id)) : undefined;
     if (m) play.playMatch(m, ch);
     else play.playChannel(ch, zapIds);
   };
+  const catchupCount = useMemo(() => (catalog ? catalog.channels.filter((c) => c.archive && !view?.hidden.has(c.id)).length : 0), [catalog, view]);
+  const matchCount = useMemo(() => sports.matches.filter((m) => m.state !== 'post').length, [sports.matches]);
+  const eventCount = useMemo(() => events.filter((e) => e.end > minute && e.start < minute + 24 * 3_600_000).length, [events, minute]);
+  const recentCount = useMemo(() => history.filter((h) => h.kind === 'live').length, [history]);
+  const allCount = (catalog?.channels.length ?? 0) - (view?.hidden.size ?? 0);
+  const special = useMemo(
+    () => [
+      { id: '__all', name: 'All channels', icon: <Tv size={16} />, count: allCount },
+      { id: '__sports', name: 'Sports today', icon: <Trophy size={16} />, count: matchCount },
+      { id: '__events', name: 'Events', icon: <CalendarRange size={16} />, count: eventCount },
+      { id: '__fav', name: 'Favourites', icon: <Star size={16} />, count: favs.length },
+      { id: '__recent', name: 'Recently watched', icon: <Clock size={16} />, count: recentCount },
+      { id: '__archive', name: 'With catch-up', icon: <Archive size={16} />, count: catchupCount },
+    ],
+    [allCount, matchCount, eventCount, favs.length, recentCount, catchupCount],
+  );
+  const onCategory = useCallback(
+    (id: string) => {
+      setParams({ cat: id });
+      setFilter('');
+    },
+    [setParams],
+  );
+  const favIds = useMemo(() => new Set(favs.map((f) => f.id)), [favs]);
+  // Row actions read the latest page state through a ref, so the rows themselves stay unchanged.
+  const actions = useRef({ pick: (_ch: Channel) => {}, open: (_ch: Channel) => {}, fav: (_ch: Channel) => {} });
+  actions.current = {
+    pick: (ch) => (narrow || !previewOn ? openFull(ch) : choose(ch.id)),
+    open: (ch) => openFull(ch),
+    fav: (ch) => profile && toggleFavorite(profile.id, { kind: 'live', id: ch.id, name: ch.name, image: ch.logo }),
+  };
+  const rowActions = useMemo(() => ({ pick: (ch: Channel) => actions.current.pick(ch), open: (ch: Channel) => actions.current.open(ch), fav: (ch: Channel) => actions.current.fav(ch) }), []);
+
+  if (status === 'loading' && !catalog) return <Spinner label="Loading channels…" />;
+  if (!catalog || !index || !profile) return null;
 
   const onListKey = (e: React.KeyboardEvent) => {
     if (!channels.length) return;
@@ -174,18 +212,8 @@ export function LiveTVPage() {
         categories={catalog.categories.live}
         counts={counts}
         value={cat}
-        onChange={(id) => {
-          setParams({ cat: id });
-          setFilter('');
-        }}
-        special={[
-          { id: '__all', name: 'All channels', icon: <Tv size={16} />, count: catalog.channels.length - (view?.hidden.size ?? 0) },
-          { id: '__sports', name: 'Sports today', icon: <Trophy size={16} />, count: sports.matches.filter((m) => m.state !== 'post').length },
-          { id: '__events', name: 'Events', icon: <CalendarRange size={16} />, count: events.filter((e) => e.end > minute && e.start < minute + 24 * 3_600_000).length },
-          { id: '__fav', name: 'Favourites', icon: <Star size={16} />, count: favs.length },
-          { id: '__recent', name: 'Recently watched', icon: <Clock size={16} />, count: history.filter((h) => h.kind === 'live').length },
-          { id: '__archive', name: 'With catch-up', icon: <Archive size={16} />, count: catalog.channels.filter((c) => c.archive && !view?.hidden.has(c.id)).length },
-        ]}
+        onChange={onCategory}
+        special={special}
       />
       <section className="channel-col" data-nav-group="column">
         <div className="col-head">
@@ -225,45 +253,21 @@ export function LiveTVPage() {
             <div style={{ height: virtualizer.getTotalSize(), position: 'relative' }}>
               {virtualizer.getVirtualItems().map((vi) => {
                 const ch = channels[vi.index];
-                const nn = nowNext(programmesFor(ch), now);
-                const isFav = favs.some((f) => f.id === ch.id);
                 // A city version picked in the panel keeps its group's row highlighted.
                 const active = selected?.id === ch.id || (!!selected && view?.repOf.get(selected.id) === ch.id);
                 return (
-                  <div
+                  <ChannelRow
                     key={ch.id}
-                    role="option"
-                    aria-selected={active}
-                    className={`channel-row ${active ? 'active' : ''}`}
-                    style={{ transform: `translateY(${vi.start}px)`, height: vi.size }}
-                    onClick={() => (narrow || !previewOn ? openFull(ch) : choose(ch.id))}
-                    onDoubleClick={() => openFull(ch)}
-                  >
-                    <span className="ch-num">{ch.num}</span>
-                    <Img src={ch.logo} alt={ch.name} className="ch-logo" />
-                    <div className="ch-body">
-                      <div className="ch-name">
-                        {ch.name} {ch.archive && <Archive size={12} className="muted" aria-label="Catch-up available" />}
-                        {(view?.groups.get(ch.id)?.length ?? 0) > 1 && <span className="chip subtle versions-chip">{view!.groups.get(ch.id)!.length} versions</span>}
-                      </div>
-                      {nn.now && (
-                        <div className="ch-now">
-                          <span className="now-title">{nn.now.title}</span>
-                          <ProgressBar value={(now - nn.now.start) / (nn.now.end - nn.now.start)} />
-                        </div>
-                      )}
-                    </div>
-                    <button
-                      className={`fav-inline ${isFav ? 'on' : ''}`}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        toggleFavorite(profile.id, { kind: 'live', id: ch.id, name: ch.name, image: ch.logo });
-                      }}
-                      aria-label={isFav ? 'Remove from favourites' : 'Add to favourites'}
-                    >
-                      <Heart size={16} fill={isFav ? 'currentColor' : 'none'} />
-                    </button>
-                  </div>
+                    ch={ch}
+                    active={active}
+                    isFav={favIds.has(ch.id)}
+                    now={now}
+                    top={vi.start}
+                    height={vi.size}
+                    versions={view?.groups.get(ch.id)?.length ?? 0}
+                    epgVersion={epgVersion}
+                    actions={rowActions}
+                  />
                 );
               })}
             </div>
@@ -327,7 +331,62 @@ export function LiveTVPage() {
   );
 }
 
-export function ChannelEpg({ channel, compact }: { channel: Channel; compact?: boolean }) {
+/**
+ * One row of the channel list. Memoised: moving the selection re-renders only the two rows whose
+ * highlight changes, not the twenty on screen.
+ */
+const ChannelRow = memo(function ChannelRow({ ch, active, isFav, now, top, height, versions, actions }: {
+  ch: Channel;
+  active: boolean;
+  isFav: boolean;
+  now: number;
+  top: number;
+  height: number;
+  versions: number;
+  /** Changes when the guide does, so the row shows the new listing. */
+  epgVersion: number;
+  actions: { pick: (ch: Channel) => void; open: (ch: Channel) => void; fav: (ch: Channel) => void };
+}) {
+  const nn = nowNext(programmesFor(ch), now);
+  return (
+    <div
+      role="option"
+      aria-selected={active}
+      className={`channel-row ${active ? 'active' : ''}`}
+      style={{ transform: `translateY(${top}px)`, height }}
+      onClick={() => actions.pick(ch)}
+      onDoubleClick={() => actions.open(ch)}
+    >
+      <span className="ch-num">{ch.num}</span>
+      <Img src={ch.logo} alt={ch.name} className="ch-logo" />
+      <div className="ch-body">
+        <div className="ch-name">
+          {ch.name} {ch.archive && <Archive size={12} className="muted" aria-label="Catch-up available" />}
+          {versions > 1 && <span className="chip subtle versions-chip">{versions} versions</span>}
+        </div>
+        {nn.now && (
+          <div className="ch-now">
+            <span className="now-title">{nn.now.title}</span>
+            <ProgressBar value={(now - nn.now.start) / (nn.now.end - nn.now.start)} />
+          </div>
+        )}
+      </div>
+      <button
+        className={`fav-inline ${isFav ? 'on' : ''}`}
+        onClick={(e) => {
+          e.stopPropagation();
+          actions.fav(ch);
+        }}
+        aria-label={isFav ? 'Remove from favourites' : 'Add to favourites'}
+      >
+        <Heart size={16} fill={isFav ? 'currentColor' : 'none'} />
+      </button>
+    </div>
+  );
+});
+
+/** Memoised: the Live TV page re-renders on every remote press while this shows one channel. */
+export const ChannelEpg = memo(function ChannelEpg({ channel, compact }: { channel: Channel; compact?: boolean }) {
   const profile = useActiveProfile();
   const { list, loading } = useChannelProgrammes(profile, channel, { needArchive: true });
   const clock24 = useSettings((s) => s.clock24);
@@ -426,4 +485,4 @@ export function ChannelEpg({ channel, compact }: { channel: Channel; compact?: b
     </ul>
     </>
   );
-}
+});

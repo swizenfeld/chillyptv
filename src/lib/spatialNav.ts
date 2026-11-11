@@ -35,10 +35,25 @@ const FOCUSABLE = [
 type Dir = 'up' | 'down' | 'left' | 'right';
 const DIRS: Record<string, Dir> = { ArrowUp: 'up', ArrowDown: 'down', ArrowLeft: 'left', ArrowRight: 'right' };
 
+// Element boxes, measured once per remote press: the search reads each candidate's box several
+// times (nearest column, line, distance), and a Fire TV stick feels every extra layout read.
+let rects: Map<Element, DOMRect> | null = null;
+function rect(el: Element): DOMRect {
+  if (!rects) return el.getBoundingClientRect();
+  let r = rects.get(el);
+  if (!r) rects.set(el, (r = el.getBoundingClientRect()));
+  return r;
+}
+
+type CheckVisibility = (o?: { checkOpacity?: boolean; checkVisibilityCSS?: boolean }) => boolean;
+
 function visible(el: HTMLElement): boolean {
   if (el.closest('[aria-hidden="true"], [inert]')) return false;
-  const r = el.getBoundingClientRect();
+  const r = rect(el);
   if (r.width < 2 || r.height < 2) return false;
+  // The browser's own check (newer WebViews) is far cheaper than reading the computed style.
+  const check = (el as HTMLElement & { checkVisibility?: CheckVisibility }).checkVisibility;
+  if (check) return check.call(el, { checkOpacity: true, checkVisibilityCSS: true });
   const st = getComputedStyle(el);
   return st.visibility !== 'hidden' && st.display !== 'none' && Number(st.opacity) > 0.05;
 }
@@ -172,11 +187,11 @@ function column(el: Element): HTMLElement | null {
  * the categories wins over a button that happens to be level with you further across.
  */
 function nearestArea(from: HTMLElement, dir: Dir, list: HTMLElement[]): { list: HTMLElement[]; staying: boolean } {
-  const f = from.getBoundingClientRect();
+  const f = rect(from);
   let best: HTMLElement | null = null;
   let bestAlong = Infinity;
   for (const el of list) {
-    const r = el.getBoundingClientRect();
+    const r = rect(el);
     const along = dir === 'right' ? r.left - f.right : f.left - r.right;
     // Wholly beyond the edge: a top-bar chip that starts just inside it isn't "the next column".
     if (along < -1) continue;
@@ -267,23 +282,32 @@ function clipper(el: HTMLElement): HTMLElement | null {
  * "left" of the page): not a place to go. Items of your own list stay, so it can scroll on.
  */
 function hiddenElsewhere(el: HTMLElement, from: HTMLElement): boolean {
-  const r = el.getBoundingClientRect();
+  const r = rect(el);
   // Every clipping container up to the one you're in too (a row, then the page scrolled past it).
   for (let c = clipper(el); c && !c.contains(from); c = clipper(c)) {
-    const b = c.getBoundingClientRect();
+    const b = rect(c);
     if (r.right <= b.left + 1 || r.left >= b.right - 1 || r.bottom <= b.top + 1 || r.top >= b.bottom - 1) return true;
   }
   return false;
 }
 
 function move(from: HTMLElement, dir: Dir, retry = 0, within?: HTMLElement): boolean {
+  rects = new Map();
+  try {
+    return search(from, dir, retry, within);
+  } finally {
+    rects = null;
+  }
+}
+
+function search(from: HTMLElement, dir: Dir, retry: number, within?: HTMLElement): boolean {
   // After scrolling a list for more items, only that list's items count: everything else moved
   // relative to it (the sidebar would suddenly look "below").
   const all = (within ? candidates().filter((el) => within.contains(el)) : candidates()).filter(
     (el) => el !== from && !el.contains(from) && !from.contains(el) && !hiddenElsewhere(el, from),
   );
   const pick = (list: HTMLElement[], inLineOnly = false) =>
-    nextInDirection(from.getBoundingClientRect(), dir, list.map((el) => ({ el, r: el.getBoundingClientRect(), minor: el.hasAttribute('data-nav-minor') })), inLineOnly);
+    nextInDirection(rect(from), dir, list.map((el) => ({ el, r: rect(el), minor: el.hasAttribute('data-nav-minor') })), inLineOnly);
   let next: HTMLElement | null;
   if (dir === 'up' || dir === 'down') {
     // Up/Down stay in the column you're in, else the area (the page, the sidebar): only Left/Right
@@ -304,11 +328,11 @@ function move(from: HTMLElement, dir: Dir, retry = 0, within?: HTMLElement): boo
     // the next column that way.
     if (!next && area.staying) {
       const own = column(from);
-      const f = from.getBoundingClientRect();
+      const f = rect(from);
       const beyond = all.filter((el) => {
         const c = column(el);
         if (!c || c === own) return false;
-        const r = el.getBoundingClientRect();
+        const r = rect(el);
         return dir === 'right' ? r.left >= f.right - 1 : r.right <= f.left + 1;
       });
       const nearest = nearestArea(from, dir, beyond);

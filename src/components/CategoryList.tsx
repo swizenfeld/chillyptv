@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { memo, useMemo, useState } from 'react';
 import { Lock, Search } from 'lucide-react';
 import { quickFilter } from '../lib/search';
 import { useParental } from './Parental';
@@ -12,7 +12,8 @@ export interface SpecialCategory {
   count?: number;
 }
 
-export function CategoryList({ categories, counts, special, value, onChange }: {
+/** Memoised: the Live TV page re-renders on every remote press in its channel list. */
+export const CategoryList = memo(function CategoryList({ categories, counts, special, value, onChange }: {
   categories: Category[];
   counts: Map<string, number>;
   special: SpecialCategory[];
@@ -66,4 +67,4 @@ export function CategoryList({ categories, counts, special, value, onChange }: {
       </div>
     </aside>
   );
-}
+});

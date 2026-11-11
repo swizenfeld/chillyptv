@@ -174,7 +174,10 @@ export function eventTitle(name: string): string | undefined {
 
 /** A guide listing built from an event channel's name, or undefined for ordinary channels. */
 export function eventListing(name: string, now = Date.now()): EventListing | undefined {
-  if (!name.includes('|') && !/@\s*(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)|PPV\s*\d+\s*:/i.test(name)) return undefined;
+  // Quick rejection, as most of a 15,000-channel playlist isn't events: a region tag ("US| ESPN 2")
+  // is the only bar in most names, so a bar only counts after it.
+  const body = name.replace(/^\s*\|?\s*[A-Za-z]{2,6}\s*\|\s*/, '');
+  if (!body.includes('|') && !/@\s*(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)|PPV\s*\d+\s*:/i.test(name)) return undefined;
   const title = eventTitle(name);
   if (!title) return undefined;
   let start = parseStart(name, now);
